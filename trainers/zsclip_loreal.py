@@ -1,30 +1,43 @@
-from collections import OrderedDict
 import os.path as osp
+
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from torch.cuda.amp import GradScaler, autocast
-
+from tqdm import tqdm
 from dassl.engine import TRAINER_REGISTRY, TrainerX
+from dassl.metrics import compute_accuracy
 from dassl.utils import load_pretrained_weights, load_checkpoint
 from dassl.optim import build_optimizer, build_lr_scheduler
-from dassl.metrics import compute_accuracy
-from mmaclip import clip
-
+import math
+import pickle
+from clip import clip
 from clip.simple_tokenizer import SimpleTokenizer as _Tokenizer
+import os
+import pdb
 _tokenizer = _Tokenizer()
+from collections import OrderedDict
 
 def load_clip_to_cpu(cfg):
     backbone_name = cfg.MODEL.BACKBONE.NAME
     url = clip._MODELS[backbone_name]
     model_path = clip._download(url)
+
     try:
+        # loading JIT archive
         model = torch.jit.load(model_path, map_location="cpu").eval()
         state_dict = None
+
     except RuntimeError:
         state_dict = torch.load(model_path, map_location="cpu")
-    model = clip.build_model(state_dict or model.state_dict())
+    design_details = {"trainer": 'CoOp',
+                      "vision_depth": 0,
+                      "language_depth": 0, "vision_ctx": 0,
+                      "language_ctx": 0}
+    model = clip.build_model(state_dict or model.state_dict(), design_details)
+
     return model
+
 
 class TextEncoder(nn.Module):
     def __init__(self, clip_model):
@@ -35,83 +48,24 @@ class TextEncoder(nn.Module):
         self.text_projection = clip_model.text_projection
         self.dtype = clip_model.dtype
 
-    def forward(self, prompts, tokenized_prompts, retrun_adapater_func=None):
+    def forward(self, prompts, tokenized_prompts):
         x = prompts + self.positional_embedding.type(self.dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
-        if retrun_adapater_func == None:
-            x = self.transformer(x)
-        else:
-            x = self.transformer([x, retrun_adapater_func])
+        x = self.transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
         x = self.ln_final(x).type(self.dtype)
+
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
         x = x[torch.arange(x.shape[0]), tokenized_prompts.argmax(dim=-1)] @ self.text_projection
-        return x
-    
-class AdapterLearner(nn.Module):
+
+        return x 
+
+class PromptLearner(nn.Module):
     def __init__(self, cfg, classnames, clip_model):
         super().__init__()
-
-        self.n_cls = len(classnames)
-        clip_imsize = clip_model.visual.input_resolution
-        cfg_imsize = cfg.INPUT.SIZE
-        # assert cfg_imsize == clip_imsize, f"cfg_imsize ({cfg_imsize}) must equal to clip_imsize ({clip_imsize})"
-
-        self._build_text_embedding(cfg, classnames, clip_model)
-
-        # build multi-modal adapter
-        self.text_adapter_func = lambda x: self.return_text_adapter(index=x)
-        self.text_adapter = self._build_adapter(
-            clip_model.ln_final.weight.shape[0], 
-            len(clip_model.transformer.resblocks), 
-            cfg.TRAINER.MMADAPTER.ADAPTER_START,
-            cfg.TRAINER.MMADAPTER.ADAPTER_END,
-            cfg.TRAINER.MMADAPTER.ADAPTER_DIM,
-            clip_model.dtype
-        )
-        
-        self.visual_adapter_func = lambda x: self.return_visual_adapter(index=x)
-        self.visual_adapter = self._build_adapter(
-            clip_model.visual.ln_post.weight.shape[0],
-            len(clip_model.visual.transformer.resblocks), 
-            cfg.TRAINER.MMADAPTER.ADAPTER_START,
-            cfg.TRAINER.MMADAPTER.ADAPTER_END,
-            cfg.TRAINER.MMADAPTER.ADAPTER_DIM,
-            clip_model.dtype
-        )
-
-        self.shared_adapter = self._build_adapter(
-            cfg.TRAINER.MMADAPTER.ADAPTER_DIM,
-            len(clip_model.visual.transformer.resblocks), 
-            cfg.TRAINER.MMADAPTER.ADAPTER_START,
-            cfg.TRAINER.MMADAPTER.ADAPTER_END,
-            cfg.TRAINER.MMADAPTER.ADAPTER_DIM,
-            clip_model.dtype
-        )
-        self.adapter_scale = float(cfg.TRAINER.MMADAPTER.ADAPTER_SCALE)
-
-    def return_text_adapter(self, index):
-        return self.text_adapter[index], self.shared_adapter[index], self.adapter_scale
-
-    def return_visual_adapter(self, index):
-        return self.visual_adapter[index], self.shared_adapter[index], self.adapter_scale
-
-
-    def _build_text_embedding(self, cfg, classnames, clip_model):
-        # dtype = clip_model.dtype
-        # text_ctx_init = cfg.TRAINER.MMADAPTER.TEXT_CTX_INIT 
-        # classnames = [name.replace("_", " ") for name in classnames]
-        # prompts = [text_ctx_init + " " + name + "." for name in classnames]
-        # tokenized_prompts = torch.cat([clip.tokenize(p) for p in prompts]) 
-        # with torch.no_grad():
-        #     embedding = clip_model.token_embedding(tokenized_prompts).type(dtype) 
-        # self.register_buffer("token_embedding", embedding)
-        # self.register_buffer("tokenized_prompts", tokenized_prompts)
-
         n_cls = len(classnames)
-        n_ctx = cfg.TRAINER.COOP.N_CTX
-        ctx_init = cfg.TRAINER.COOP.CTX_INIT
+        n_ctx = cfg.TRAINER.COOP.N_CTX 
         dtype = clip_model.dtype
         ctx_dim = clip_model.ln_final.weight.shape[0]
         # clip_imsize = clip_model.visual.input_resolution
@@ -125,9 +79,16 @@ class AdapterLearner(nn.Module):
             print("Initializing a generic context")
             ctx_vectors = torch.empty(n_ctx, ctx_dim, dtype=dtype)
 
-        nn.init.normal_(ctx_vectors, std=0.02)
-        prompt_prefix = " ".join(["X"] * n_ctx) 
-        self.ctx = nn.Parameter(ctx_vectors) 
+        nn.init.normal_(ctx_vectors, std=0.02) 
+        # use given words to initialize context vectors
+        ctx_init = "A_photo_of_a".replace("_", " ")
+        n_ctx = len(ctx_init.split(" "))
+        prompt = clip.tokenize(ctx_init)
+        with torch.no_grad():
+            embedding = clip_model.token_embedding(prompt).type(dtype)
+        ctx_vectors = embedding[0, 1 : 1 + n_ctx, :]
+        prompt_prefix = ctx_init 
+  
         self.use_atp = cfg.TRAINER.ATPROMPT.USE_ATPROMPT
         self.atp_num = cfg.TRAINER.ATPROMPT.ATT_NUM 
         print(f'self.use_atp is {self.use_atp}')
@@ -203,9 +164,9 @@ class AdapterLearner(nn.Module):
                 self.register_buffer("token_middle1", embedding[:, 1+n_att1 : n_att1+1+1, :])
                 self.register_buffer("token_middle2", embedding[:, 1+n_att1+1+n_att2 : 1+n_att1+1+n_att2+1, :])
                 self.register_buffer("token_middle3", embedding[:, 1+n_att1+1+n_att2+1+n_att3 : 1+n_att1+1+n_att2+1+n_att3+1, :])
-                self.register_buffer("token_suffix", embedding[:, 1+n_att1+1+n_att2+1+n_att3+1+n_ctx:, :])
+                self.register_buffer("token_suffix", embedding[:, 1+n_att1+1+n_att2+1+n_att3+1:, :])
             else:
-                raise ValueError
+                raise ValueError 
         else:
             self.register_buffer("token_suffix", embedding[:, 1 + n_ctx :, :])  # CLS, EOS
             
@@ -221,26 +182,18 @@ class AdapterLearner(nn.Module):
                         ("relu", nn.ReLU(inplace=True)),
                         ("linear2", nn.Linear(512 // 16, ctx_dim))
                     ])) for i in range(3)]).to(dtype)
-         
-    def contruct_prompts(self, image_features=None):
-        ctx = self.ctx
+
+    def forward(self, image_features): 
         if self.use_atp:
-            if image_features is not None:
-                ctx_att1 = self.metanets[0](image_features).mean(dim=0,keepdim=True).repeat(self.anx, 1) # self.ctx_att1
-                ctx_att2 = self.metanets[1](image_features).mean(dim=0,keepdim=True).repeat(self.anx, 1) # self.ctx_att2
-                ctx_att3 = self.metanets[2](image_features).mean(dim=0,keepdim=True).repeat(self.anx, 1) # self.ctx_att3
-            else:
-                ctx_att1 = self.ctx_att1
-                ctx_att2 = self.ctx_att2
-                ctx_att3 = self.ctx_att3
-
-        if ctx.dim() == 2:
-            ctx = ctx.unsqueeze(0).expand(self.n_cls, -1, -1)
-            if self.use_atp: 
-                ctx_att1 = ctx_att1.unsqueeze(0).expand(self.n_cls, -1, -1)
-                ctx_att2 = ctx_att2.unsqueeze(0).expand(self.n_cls, -1, -1)
-                ctx_att3 = ctx_att3.unsqueeze(0).expand(self.n_cls, -1, -1)
-
+            ctx_att1 = self.metanets[0](image_features).mean(dim=0,keepdim=True).repeat(self.anx, 1) # self.ctx_att1
+            ctx_att2 = self.metanets[1](image_features).mean(dim=0,keepdim=True).repeat(self.anx, 1) # self.ctx_att2
+            ctx_att3 = self.metanets[2](image_features).mean(dim=0,keepdim=True).repeat(self.anx, 1) # self.ctx_att3
+  
+        if self.use_atp: 
+            ctx_att1 = ctx_att1.unsqueeze(0).expand(self.n_cls, -1, -1)
+            ctx_att2 = ctx_att2.unsqueeze(0).expand(self.n_cls, -1, -1)
+            ctx_att3 = ctx_att3.unsqueeze(0).expand(self.n_cls, -1, -1)
+             
         prefix = self.token_prefix
         suffix = self.token_suffix
         
@@ -251,8 +204,7 @@ class AdapterLearner(nn.Module):
                     [
                         prefix,
                         ctx_att1,
-                        middle_attribute1,
-                        ctx,
+                        middle_attribute1, 
                         suffix,
                     ],
                     dim=1,
@@ -266,8 +218,7 @@ class AdapterLearner(nn.Module):
                         ctx_att1,
                         middle_attribute1,
                         ctx_att2,
-                        middle_attribute2,
-                        ctx,
+                        middle_attribute2, 
                         suffix,
                     ],
                     dim=1,
@@ -284,8 +235,7 @@ class AdapterLearner(nn.Module):
                         ctx_att2,
                         middle_attribute2,
                         ctx_att3,
-                        middle_attribute3,
-                        ctx,     
+                        middle_attribute3, 
                         suffix, 
                     ],
                     dim=1,
@@ -295,136 +245,55 @@ class AdapterLearner(nn.Module):
         else:
             prompts = torch.cat(
                 [
-                    prefix,  # (n_cls, 1, dim)
-                    ctx,     # (n_cls, n_ctx, dim) 
+                    prefix,  # (n_cls, 1, dim) 
                     suffix,  # (n_cls, *, dim)
                 ],
                 dim=1,
             )
 
+        with open("PATH-main/wars.pkl","wb") as f:
+            aa = prompts
+            pickle.dump([aa.detach(), self.tokenized_prompts], f)
+        f.close()
+        pdb.set_trace()
+
         return prompts
 
-         
-    def _build_adapter(self, d_model, n_layers, l_start, l_end, mid_dim, dtype):
-
-        adapter = [None] * (n_layers + 1)
-        for i in range(l_start, l_end+1):
-            if mid_dim == d_model:
-                adapter[i] = nn.Sequential(
-                    nn.Linear(d_model, mid_dim),
-                    nn.ReLU()
-                )
-            else:
-                adapter[i] = nn.Sequential(OrderedDict([
-                    ("down", nn.Sequential(nn.Linear(d_model, mid_dim), nn.ReLU())),
-                    ("up", nn.Linear(mid_dim, d_model))
-                ]))
-        adapter = nn.ModuleList([a for a in adapter])
-        for m in adapter.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
-                nn.init.constant_(m.bias, 0)
-
-        if dtype == torch.float16:
-            for m in adapter.modules():
-                m.half()
-    
-        return adapter
-    
-    def forward(self, image_features=None):
-        embedding = self.contruct_prompts(image_features)
-        if self.text_adapter[0] is not None:
-            token_embedding = self.text_adapter[0].down(embedding)
-            shared_adapter = self.shared_adapter[0]
-            token_embedding = shared_adapter(token_embedding)
-            token_embedding = self.text_adapter[0].up(token_embedding)
-            embedding = embedding + self.adapter_scale * token_embedding
-        return embedding, self.text_adapter_func, self.visual_adapter_func
 
 class CustomCLIP(nn.Module):
     def __init__(self, cfg, classnames, clip_model):
         super().__init__()
-
-        self.prompt_learner = AdapterLearner(cfg, classnames, clip_model)
+        self.prompt_learner = PromptLearner(cfg, classnames, clip_model)
         self.tokenized_prompts = self.prompt_learner.tokenized_prompts
         self.image_encoder = clip_model.visual
         self.text_encoder = TextEncoder(clip_model)
         self.logit_scale = clip_model.logit_scale
         self.dtype = clip_model.dtype
-        self.text_features_for_inference = None
-
-    def encode_text(self, prompts, tokenized_prompts, text_adapter_func=None):
-        if text_adapter_func is not None:
-            text_features = self.text_encoder(
-                prompts, tokenized_prompts, text_adapter_func
-            )
-        else:
-            text_features = self.text_encoder(
-                prompts, tokenized_prompts
-            )
-        return text_features
-    
-    def encode_image(self, image, visual_adapter_func=None):
-        if visual_adapter_func is not None:
-            image_features = self.image_encoder(
-                [image.type(self.dtype), visual_adapter_func]
-            )
-        else:
-            image_features = self.image_encoder(
-                image.type(self.dtype)
-            )
-        return image_features
-
 
     def only_image_outputs(self, image):
         with torch.no_grad():
-            token_embedding, text_adapter_func, visual_adapter_func = self.prompt_learner()
-            tokenized_prompts = self.tokenized_prompts 
-            if self.prompt_learner.training:
-                text_features = self.encode_text(
-                    token_embedding, tokenized_prompts, text_adapter_func
-                )
-            else:
-                if self.text_features_for_inference is None:
-                    self.text_features_for_inference = self.encode_text(
-                        token_embedding, tokenized_prompts, text_adapter_func
-                    )   
-                text_features = self.text_features_for_inference 
-            image_features = self.encode_image(image, visual_adapter_func) 
-            image_features = F.normalize(image_features, dim=-1) 
+            image_features = self.image_encoder(image.type(self.dtype))
+            image_features = image_features / image_features.norm(dim=-1, keepdim=True)
             return image_features
 
-    def forward(self, image, stus=None):
-        token_embedding, text_adapter_func, visual_adapter_func = self.prompt_learner(stus)
+    def forward(self, image, student_visual=None):
+        image_features = self.image_encoder(image.type(self.dtype))
+        image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+
+        prompts = self.prompt_learner(student_visual if student_visual is not None else image_features)
         tokenized_prompts = self.tokenized_prompts
-
-        if self.prompt_learner.training:
-            text_features = self.encode_text(
-                token_embedding, tokenized_prompts, text_adapter_func
-            )
-        else:
-            if self.text_features_for_inference is None:
-                self.text_features_for_inference = self.encode_text(
-                    token_embedding, tokenized_prompts, text_adapter_func
-                )   
-            text_features = self.text_features_for_inference
-
-        image_features = self.encode_image(image, visual_adapter_func)
-
-        text_features = F.normalize(text_features, dim=-1)
-        image_features = F.normalize(image_features, dim=-1)
+        text_features = self.text_encoder(prompts, tokenized_prompts) 
+        text_features = text_features / text_features.norm(dim=-1, keepdim=True)
 
         logit_scale = self.logit_scale.exp()
         logits = logit_scale * image_features @ text_features.t()
 
-        return logits
-
-
+        return logits 
+  
 @TRAINER_REGISTRY.register()
-class MultiModalAdapter_REDIS(TrainerX):
-
+class ZeroshotCLIP_LOREAL(TrainerX): 
     def check_cfg(self, cfg):
-        assert cfg.TRAINER.MMADAPTER.PREC in ["fp16", "fp32", "amp"]
+        assert cfg.TRAINER.COOP.PREC in ["fp16", "fp32", "amp"]
 
     def build_model(self):
         cfg = self.cfg
@@ -433,27 +302,9 @@ class MultiModalAdapter_REDIS(TrainerX):
         print(f"Loading CLIP (backbone: {cfg.MODEL.BACKBONE.NAME})")
         clip_model = load_clip_to_cpu(cfg)
         
-        if cfg.TRAINER.MMADAPTER.PREC == "fp32" or cfg.TRAINER.MMADAPTER.PREC == "amp":
+        if cfg.TRAINER.COOP.PREC == "fp32" or cfg.TRAINER.COOP.PREC == "amp":
             # CLIP's default precision is fp16
             clip_model.float()
-
-
-        # print("Building custom CLIP")
-        # self.model = CustomCLIP(cfg, classnames, clip_model) 
-        # print("Turning off gradients in both the image and the text encoder") 
-        # for name, param in self.model.named_parameters():
-        #     if "text_adapter" not in name and "visual_adapter" not in name and "shared_adapter" not in name:
-        #         param.requires_grad_(False) 
-        # # Double check
-        # num_trainable_params = 0
-        # enabled = set()
-        # for name, param in self.model.named_parameters():
-        #     if param.requires_grad:
-        #         enabled.add(name)
-        #         num_trainable_params += param.data.nelement()
-        # print(f"Parameters to be updated: {enabled}") 
-        # print(f"Number of trainable parameters: {num_trainable_params}") 
-
 
         # --------------------------------------------------
         print("Building custom CLIP")
@@ -461,63 +312,91 @@ class MultiModalAdapter_REDIS(TrainerX):
         METHOD = cfg.TRAINER.NAME
         map = {"FGVCAircraft":"fgvc_aircraft","DescribableTextures":"dtd","Caltech101":"caltech101","EuroSAT":"eurosat", 
             "Food101":"food101","OxfordFlowers":"oxford_flowers","StanfordCars":"stanford_cars","UCF101":"ucf101","SUN397":"sun397",
-            "OxfordPets":"oxford_pets"}
-        DATASET = map[cfg.DATASET.NAME]  
-        CONFIG = "vit_b16_ep5.yaml"
-        TOSI = cfg.POW.TOSIZE
+            "OxfordPets":"oxford_pets","ImageNet":"imagenet"}
+        DATASET = map[cfg.DATASET.NAME] # 
+        CONFIG = "vit_b16_ep50.yaml"
+        TOSI = cfg.LOREAL.TOSIZE
         SEED = cfg.SEED 
-        model_path = f"PATH/output/{METHOD}/base2new/train_base/{DATASET}/{METHOD}_stage2_students_pretraining_second/{TOSI}/{CONFIG}/seed{SEED}/prompt_learner/model.pth.tar-{cfg.OPTIM.MAX_EPOCH}"
-        checkpoint = load_checkpoint(model_path)
-        state_dict = checkpoint["state_dict"]  
-        if "token_prefix" in state_dict: 
-            del state_dict["token_prefix"]
-        if "token_suffix" in state_dict: 
-            del state_dict["token_suffix"]
+        # model_path = f"PATH/output/{METHOD}/base2new/train_base/{DATASET}/{METHOD}_stage2_students_pretraining_second/{TOSI}/{CONFIG}/seed{SEED}/prompt_learner/model.pth.tar-{cfg.OPTIM.MAX_EPOCH}"
+        # checkpoint = load_checkpoint(model_path)
+        # state_dict = checkpoint["state_dict"]  
+        # if "token_prefix" in state_dict: # coop does not need this
+        #     del state_dict["token_prefix"]
+        # if "token_suffix" in state_dict: # coop does not need this
+        #     del state_dict["token_suffix"]
             
-        self.model.prompt_learner.load_state_dict(state_dict, strict=False)
+        # self.model.prompt_learner.load_state_dict(state_dict, strict=False)
         self.model.to(self.device) 
         for name, param in self.model.named_parameters():
             if "prompt_learner" not in name:
-                param.requires_grad_(False) 
+                param.requires_grad_(False)
+
+        # if cfg.MODEL.INIT_WEIGHTS:
+        #     load_pretrained_weights(self.model.prompt_learner, cfg.MODEL.INIT_WEIGHTS) 
         # ----------------------------------------------------
+
+
 
 
         # -------------------------------------------------- 
         clip_model_teacher = load_clip_to_cpu(cfg)
         self.model_teacher = CustomCLIP(cfg, classnames, clip_model_teacher) 
-        model_path = f"PATH/output/{METHOD}/base2new/train_base/{DATASET}/{METHOD}_stage1_students_pretraining_first/{CONFIG}/seed{SEED}/prompt_learner/model.pth.tar-{cfg.OPTIM.MAX_EPOCH}"
-        self.train_modal = cfg.TRAINER.MODAL 
-        checkpoint = load_checkpoint(model_path)
-        state_dict = checkpoint["state_dict"]  
-        if "token_prefix" in state_dict: # coop does not need this
-            del state_dict["token_prefix"]
-        if "token_suffix" in state_dict: # coop does not need this
-            del state_dict["token_suffix"]
+        # model_path = f"PATH/output/{METHOD}/base2new/train_base/{DATASET}/{METHOD}_stage1_students_pretraining_first/{CONFIG}/seed{SEED}/prompt_learner/model.pth.tar-{cfg.OPTIM.MAX_EPOCH}"
+        # self.train_modal = cfg.TRAINER.MODAL 
+        # checkpoint = load_checkpoint(model_path)
+        # state_dict = checkpoint["state_dict"]  
+        # if "token_prefix" in state_dict: # coop does not need this
+        #     del state_dict["token_prefix"]
+        # if "token_suffix" in state_dict: # coop does not need this
+        #     del state_dict["token_suffix"]
             
-        self.model_teacher.prompt_learner.load_state_dict(state_dict, strict=False)
+        # self.model_teacher.prompt_learner.load_state_dict(state_dict, strict=False)
         self.model_teacher.to(self.device) 
         for name, param in self.model_teacher.named_parameters():
             if "prompt_learner" not in name:
                 param.requires_grad_(False)
         # ----------------------------------------------------
- 
+        
+         
+
+        # if "prompt_learner.token_prefix2" in state_dict:
+        #     del state_dict["prompt_learner.token_prefix2"]  
+        # if "prompt_learner.token_suffix" in state_dict:
+        #     del state_dict["prompt_learner.token_suffix"]
+        # if "prompt_learner.token_suffix2" in state_dict:
+        #     del state_dict["prompt_learner.token_suffix2"] 
+
         self.model.to(self.device)
         # NOTE: only give prompt_learner to the optimizer
-        self.optim = build_optimizer(self.model.prompt_learner, cfg.OPTIM)
+        
+        # list(model1.parameters()) + list(model2.parameters())
+        # self.optim = build_optimizer(self.model.prompt_learner, cfg.OPTIM)
+        self.optim = build_optimizer(list(self.model.prompt_learner.parameters())+list(self.model_teacher.prompt_learner.parameters()), cfg.OPTIM) 
         self.sched = build_lr_scheduler(self.optim, cfg.OPTIM)
         self.register_model("prompt_learner", self.model.prompt_learner, self.optim, self.sched) 
-        self.scaler = GradScaler() if cfg.TRAINER.MMADAPTER.PREC == "amp" else None
- 
-
-    def forward_backward(self, batch):
+        self.register_model("prompt_learner2", self.model_teacher.prompt_learner, self.optim, self.sched) 
+        self.scaler = GradScaler() if cfg.TRAINER.COOP.PREC == "amp" else None 
+        # Note that multi-gpu training could be slow because CLIP's size is
+        # big, which slows down the copy operation in DataParallel
+        device_count = torch.cuda.device_count() 
+        self.temperature = cfg.TRAINER.PROMPTKD.TEMPERATURE
+  
+    def forward_backward(self, batch): 
         image, niimage, label = self.parse_batch_train(batch) 
         stu2 = self.model.only_image_outputs(niimage)
         stu1 = self.model_teacher.only_image_outputs(image)
         
         tea_logits = self.model_teacher(image, stu2)  
-        output = self.model(niimage, stu1)
+        output = self.model(image, stu1)
         loss = F.cross_entropy(output, label) 
-        loss += F.pairwise_distance(stu1, stu2).mean() 
+        loss += F.pairwise_distance(stu1, stu2).mean()
+        
+        # lossu = self.cfg.TRAINER.PROMPTKD.KD_WEIGHT * F.kl_div(
+        #     F.log_softmax(output / self.temperature, dim=1),
+        #     F.softmax(tea_logits.detach() / self.temperature, dim=1),
+        #     reduction='sum',
+        # ) * (self.temperature * self.temperature)  
+        # loss += lossu
         
         self.model_backward_and_update(loss)
         self.federated_avg()
@@ -531,24 +410,29 @@ class MultiModalAdapter_REDIS(TrainerX):
              
         return loss_summary
 
-    # def parse_batch_train(self, batch):
-    #     input = batch["img"]
-    #     label = batch["label"]
-    #     input = input.to(self.device)
-    #     label = label.to(self.device)
-    #     return input, label
+    def federated_avg(self): # self.distribute(idx)
+        import copy
+        w_glob = None 
+        w_local1 = self.model.prompt_learner.state_dict()
+        w_local2 = self.model_teacher.prompt_learner.state_dict()
+        w_glob = copy.deepcopy(w_local1)
+        for k in w_glob.keys():
+            w_glob[k] += w_local2[k] 
+        for k in w_glob.keys():
+            w_glob[k] = torch.div(w_glob[k], 2) 
+        self.model.prompt_learner.load_state_dict(w_glob, strict=False)
+        self.model_teacher.prompt_learner.load_state_dict(w_glob, strict=False)
 
     def parse_batch_train(self, batch):
         input = batch["img"]
         label = batch["label"]
-        niinput = batch["niimg"] 
-        niinput = niinput.to(self.device)
+        niinput = batch["niimg"]
         input = input.to(self.device)
+        niinput = niinput.to(self.device)
         label = label.to(self.device)
         return input, niinput, label
 
     def load_model(self, directory, epoch=None):
-
         if not directory:
             print("Note that load_model() is skipped as no pretrained model is given")
             return
@@ -562,6 +446,13 @@ class MultiModalAdapter_REDIS(TrainerX):
             model_file = "model.pth.tar-" + str(epoch)
 
         for name in names:
+            if epoch < 0:
+                all_model_files = os.listdir(osp.join(directory, name))
+                all_model_files = [file_ for file_ in all_model_files if file_ != 'checkpoint']
+                model_epochs = [int(file_.split('-')[-1]) for file_ in all_model_files]
+                last_epoch = max(model_epochs)
+                model_file = 'model.pth.tar-' + str(last_epoch)
+
             model_path = osp.join(directory, name, model_file)
 
             if not osp.exists(model_path):
@@ -584,5 +475,5 @@ class MultiModalAdapter_REDIS(TrainerX):
                 del state_dict["token_suffix"]
 
             print("Loading weights to {} " 'from "{}" (epoch = {})'.format(name, model_path, epoch))
-            # set strict=False
+            # set strict=False 
             self._models[name].load_state_dict(state_dict, strict=False)

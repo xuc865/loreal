@@ -461,7 +461,7 @@ import torch, gc
 device = torch.device('cuda')
   
 @TRAINER_REGISTRY.register()
-class MMRL_REDIS(TrainerX):
+class MMRL_LOREAL(TrainerX):
     def check_cfg(self, cfg):
         assert cfg.TRAINER.MMRL.PREC in ["fp16", "fp32", "amp"]
 
@@ -522,7 +522,7 @@ class MMRL_REDIS(TrainerX):
             "OxfordPets":"oxford_pets"}
         DATASET = map[cfg.DATASET.NAME] # 
         CONFIG = "vit_b16.yaml"
-        TOSI = cfg.POW.TOSIZE
+        TOSI = cfg.LOREAL.TOSIZE
         SEED = cfg.SEED 
         model_path = f"PATH/output/{METHOD}/base2new/train_base/{DATASET}/{METHOD}_stage2_students_pretraining_second/{TOSI}/{CONFIG}/seed{SEED}/prompt_learner/model.pth.tar-{cfg.OPTIM.MAX_EPOCH}"
         checkpoint = load_checkpoint(model_path)

@@ -1,44 +1,30 @@
-import os.path as osp
 from collections import OrderedDict
-import math
-import copy
+import os.path as osp
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from torch.cuda.amp import GradScaler, autocast
-import pdb
+
 from dassl.engine import TRAINER_REGISTRY, TrainerX
-from dassl.metrics import compute_accuracy
 from dassl.utils import load_pretrained_weights, load_checkpoint
 from dassl.optim import build_optimizer, build_lr_scheduler
+from dassl.metrics import compute_accuracy
+from mmaclip import clip
 
-from clip import clip
 from clip.simple_tokenizer import SimpleTokenizer as _Tokenizer
-
 _tokenizer = _Tokenizer()
-
 
 def load_clip_to_cpu(cfg):
     backbone_name = cfg.MODEL.BACKBONE.NAME
     url = clip._MODELS[backbone_name]
     model_path = clip._download(url)
-    
     try:
-        # loading JIT archive
         model = torch.jit.load(model_path, map_location="cpu").eval()
         state_dict = None
-
     except RuntimeError:
         state_dict = torch.load(model_path, map_location="cpu")
-    design_details = {"trainer": 'MaPLe',
-                      "vision_depth": 0,
-                      "language_depth": 0, "vision_ctx": 0,
-                      "language_ctx": 0,
-                      "maple_length": cfg.TRAINER.MAPLE.N_CTX}
-    model = clip.build_model(state_dict or model.state_dict(), design_details)
-
+    model = clip.build_model(state_dict or model.state_dict())
     return model
-
 
 class TextEncoder(nn.Module):
     def __init__(self, clip_model):
@@ -49,75 +35,110 @@ class TextEncoder(nn.Module):
         self.text_projection = clip_model.text_projection
         self.dtype = clip_model.dtype
 
-    def forward(self, prompts, tokenized_prompts, compound_prompts_deeper_text):
+    def forward(self, prompts, tokenized_prompts, retrun_adapater_func=None):
         x = prompts + self.positional_embedding.type(self.dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
-        # Pass as the list, as nn.sequential cannot process multiple arguments in the forward pass
-        combined = [x, compound_prompts_deeper_text, 0]  # third argument is the counter which denotes depth of prompt 
-        outputs = self.transformer(combined)
-        x = outputs[0]  # extract the x back from here
+        if retrun_adapater_func == None:
+            x = self.transformer(x)
+        else:
+            x = self.transformer([x, retrun_adapater_func])
         x = x.permute(1, 0, 2)  # LND -> NLD
         x = self.ln_final(x).type(self.dtype)
-
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
         x = x[torch.arange(x.shape[0]), tokenized_prompts.argmax(dim=-1)] @ self.text_projection
-
         return x
-
-
-class MultiModalPromptLearner(nn.Module):
+    
+class AdapterLearner(nn.Module):
     def __init__(self, cfg, classnames, clip_model):
         super().__init__()
-        n_cls = len(classnames)
-        n_ctx = cfg.TRAINER.MAPLE.N_CTX
-        ctx_init = cfg.TRAINER.MAPLE.CTX_INIT
-        dtype = clip_model.dtype
-        ctx_dim = clip_model.ln_final.weight.shape[0]
+
+        self.n_cls = len(classnames)
         clip_imsize = clip_model.visual.input_resolution
         cfg_imsize = cfg.INPUT.SIZE
-        # Default is 1, which is compound shallow prompting
-        assert cfg.TRAINER.MAPLE.PROMPT_DEPTH >= 1, "For MaPLe, PROMPT_DEPTH should be >= 1"
-        self.compound_prompts_depth = cfg.TRAINER.MAPLE.PROMPT_DEPTH  # max=12, but will create 11 such shared prompts
         # assert cfg_imsize == clip_imsize, f"cfg_imsize ({cfg_imsize}) must equal to clip_imsize ({clip_imsize})"
 
-        if ctx_init and (n_ctx) <= 4:
-            # use given words to initialize context vectors
-            ctx_init = ctx_init.replace("_", " ")
-            n_ctx = n_ctx
-            prompt = clip.tokenize(ctx_init)
-            with torch.no_grad():
-                embedding = clip_model.token_embedding(prompt).type(dtype)
-            ctx_vectors = embedding[0, 1: 1 + n_ctx, :]
-            prompt_prefix = ctx_init
+        self._build_text_embedding(cfg, classnames, clip_model)
+
+        # build multi-modal adapter
+        self.text_adapter_func = lambda x: self.return_text_adapter(index=x)
+        self.text_adapter = self._build_adapter(
+            clip_model.ln_final.weight.shape[0], 
+            len(clip_model.transformer.resblocks), 
+            cfg.TRAINER.MMADAPTER.ADAPTER_START,
+            cfg.TRAINER.MMADAPTER.ADAPTER_END,
+            cfg.TRAINER.MMADAPTER.ADAPTER_DIM,
+            clip_model.dtype
+        )
+        
+        self.visual_adapter_func = lambda x: self.return_visual_adapter(index=x)
+        self.visual_adapter = self._build_adapter(
+            clip_model.visual.ln_post.weight.shape[0],
+            len(clip_model.visual.transformer.resblocks), 
+            cfg.TRAINER.MMADAPTER.ADAPTER_START,
+            cfg.TRAINER.MMADAPTER.ADAPTER_END,
+            cfg.TRAINER.MMADAPTER.ADAPTER_DIM,
+            clip_model.dtype
+        )
+
+        self.shared_adapter = self._build_adapter(
+            cfg.TRAINER.MMADAPTER.ADAPTER_DIM,
+            len(clip_model.visual.transformer.resblocks), 
+            cfg.TRAINER.MMADAPTER.ADAPTER_START,
+            cfg.TRAINER.MMADAPTER.ADAPTER_END,
+            cfg.TRAINER.MMADAPTER.ADAPTER_DIM,
+            clip_model.dtype
+        )
+        self.adapter_scale = float(cfg.TRAINER.MMADAPTER.ADAPTER_SCALE)
+
+    def return_text_adapter(self, index):
+        return self.text_adapter[index], self.shared_adapter[index], self.adapter_scale
+
+    def return_visual_adapter(self, index):
+        return self.visual_adapter[index], self.shared_adapter[index], self.adapter_scale
+
+
+    def _build_text_embedding(self, cfg, classnames, clip_model):
+        # dtype = clip_model.dtype
+        # text_ctx_init = cfg.TRAINER.MMADAPTER.TEXT_CTX_INIT 
+        # classnames = [name.replace("_", " ") for name in classnames]
+        # prompts = [text_ctx_init + " " + name + "." for name in classnames]
+        # tokenized_prompts = torch.cat([clip.tokenize(p) for p in prompts]) 
+        # with torch.no_grad():
+        #     embedding = clip_model.token_embedding(tokenized_prompts).type(dtype) 
+        # self.register_buffer("token_embedding", embedding)
+        # self.register_buffer("tokenized_prompts", tokenized_prompts)
+
+        n_cls = len(classnames)
+        n_ctx = cfg.TRAINER.COOP.N_CTX
+        ctx_init = cfg.TRAINER.COOP.CTX_INIT
+        dtype = clip_model.dtype
+        ctx_dim = clip_model.ln_final.weight.shape[0]
+        # clip_imsize = clip_model.visual.input_resolution
+        # cfg_imsize = cfg.INPUT.SIZE
+        # assert cfg_imsize == clip_imsize, f"cfg_imsize ({cfg_imsize}) must equal to clip_imsize ({clip_imsize})" 
+        # random initialization
+        if cfg.TRAINER.COOP.CSC:  # usually false
+            print("Initializing class-specific contexts")
+            ctx_vectors = torch.empty(n_cls, n_ctx, ctx_dim, dtype=dtype)
         else:
-            # random initialization
+            print("Initializing a generic context")
             ctx_vectors = torch.empty(n_ctx, ctx_dim, dtype=dtype)
-            nn.init.normal_(ctx_vectors, std=0.02)
-            prompt_prefix = " ".join(["X"] * n_ctx)
-            
-        print('MaPLe design: Multi-modal Prompt Learning')
-        print(f'Initial context: "{prompt_prefix}"')
-        print(f"Number of MaPLe context words (tokens): {n_ctx}")
-        # These below, related to the shallow prompts
-        # Linear layer so that the tokens will project to 512 and will be initialized from 768
-        self.proj = nn.Linear(ctx_dim, 768)
-        self.proj.half()
+
+        nn.init.normal_(ctx_vectors, std=0.02)
+        prompt_prefix = " ".join(["X"] * n_ctx) 
         self.ctx = nn.Parameter(ctx_vectors) 
         self.use_atp = cfg.TRAINER.ATPROMPT.USE_ATPROMPT
         self.atp_num = cfg.TRAINER.ATPROMPT.ATT_NUM 
         print(f'self.use_atp is {self.use_atp}')
         print(f'self.atp_num is {self.atp_num}')
-        self.compound_prompts_text = nn.ParameterList([nn.Parameter(torch.empty(n_ctx, 512))  for _ in range(self.compound_prompts_depth - 1)])
-        for single_para in self.compound_prompts_text:
-            nn.init.normal_(single_para, std=0.02)
-        # Also make corresponding projection layers, for each prompt
-        single_layer = nn.Linear(ctx_dim, 768)
-        self.compound_prompt_projections = _get_clones(single_layer, self.compound_prompts_depth - 1) 
+
+        prompts = [prompt_prefix + " " + name + "." for name in classnames] 
+        print(f'Initial context: "{prompt_prefix}"')
+        print(f"Number of context words (tokens): {n_ctx}") 
         classnames = [name.replace("_", " ") for name in classnames]
         name_lens = [len(_tokenizer.encode(name)) for name in classnames]
-        # prompts = [prompt_prefix + " " + name + "." for name in classnames]
- 
+
         if self.use_atp:
             print("USE ATPROPMT-ING 1")
             n_att1 = cfg.TRAINER.ATPROMPT.N_ATT1
@@ -154,20 +175,7 @@ class MultiModalPromptLearner(nn.Module):
             else:
                 print("wrong parameter.")
                 raise ValueError 
- 
-        # tokenized_prompts = torch.cat([clip.tokenize(p) for p in prompts])  # (n_cls, n_tkn)
-        # with torch.no_grad():
-        #     embedding = clip_model.token_embedding(tokenized_prompts).type(dtype) 
-        # # These token vectors will be saved when in save_model(),
-        # # but they should be ignored in load_model() as we want to use
-        # # those computed using the current class names
-        # self.register_buffer("token_prefix", embedding[:, :1, :])  # SOS
-        # self.register_buffer("token_suffix", embedding[:, 1 + n_ctx:, :])  # CLS, EOS 
-        # self.n_cls = n_cls
-        # self.n_ctx = n_ctx
-        # self.tokenized_prompts = tokenized_prompts  # torch.Tensor
-        # self.name_lens = name_lens
- 
+        
         tokenized_prompts = torch.cat([clip.tokenize(p) for p in prompts])
         with torch.no_grad():
             embedding = clip_model.token_embedding(tokenized_prompts).type(dtype)
@@ -213,9 +221,8 @@ class MultiModalPromptLearner(nn.Module):
                         ("relu", nn.ReLU(inplace=True)),
                         ("linear2", nn.Linear(512 // 16, ctx_dim))
                     ])) for i in range(3)]).to(dtype)
-
-
-    def construct_prompts(self, ctx, prefix, suffix, image_features=None):
+         
+    def contruct_prompts(self, image_features=None):
         ctx = self.ctx
         if self.use_atp:
             if image_features is not None:
@@ -293,70 +300,131 @@ class MultiModalPromptLearner(nn.Module):
                     suffix,  # (n_cls, *, dim)
                 ],
                 dim=1,
-            ) 
+            )
+
         return prompts
-     
+
+         
+    def _build_adapter(self, d_model, n_layers, l_start, l_end, mid_dim, dtype):
+
+        adapter = [None] * (n_layers + 1)
+        for i in range(l_start, l_end+1):
+            if mid_dim == d_model:
+                adapter[i] = nn.Sequential(
+                    nn.Linear(d_model, mid_dim),
+                    nn.ReLU()
+                )
+            else:
+                adapter[i] = nn.Sequential(OrderedDict([
+                    ("down", nn.Sequential(nn.Linear(d_model, mid_dim), nn.ReLU())),
+                    ("up", nn.Linear(mid_dim, d_model))
+                ]))
+        adapter = nn.ModuleList([a for a in adapter])
+        for m in adapter.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+                nn.init.constant_(m.bias, 0)
+
+        if dtype == torch.float16:
+            for m in adapter.modules():
+                m.half()
+    
+        return adapter
+    
     def forward(self, image_features=None):
-        ctx = self.ctx
-
-        if ctx.dim() == 2:
-            ctx = ctx.unsqueeze(0).expand(self.n_cls, -1, -1)
-
-        prefix = self.token_prefix
-        suffix = self.token_suffix
-        prompts = self.construct_prompts(ctx, prefix, suffix, image_features) 
-        # Before returning, need to transform
-        # prompts to 768 for the visual side
-        visual_deep_prompts = []
-        for index, layer in enumerate(self.compound_prompt_projections):
-            visual_deep_prompts.append(layer(self.compound_prompts_text[index]))
-        # Now the other way around
-        # We will project the textual prompts from 512 to 768
-        return prompts, self.proj(self.ctx), self.compound_prompts_text, visual_deep_prompts   # pass here original, as for visual 768 is required
-
+        embedding = self.contruct_prompts(image_features)
+        if self.text_adapter[0] is not None:
+            token_embedding = self.text_adapter[0].down(embedding)
+            shared_adapter = self.shared_adapter[0]
+            token_embedding = shared_adapter(token_embedding)
+            token_embedding = self.text_adapter[0].up(token_embedding)
+            embedding = embedding + self.adapter_scale * token_embedding
+        return embedding, self.text_adapter_func, self.visual_adapter_func
 
 class CustomCLIP(nn.Module):
     def __init__(self, cfg, classnames, clip_model):
         super().__init__()
-        self.prompt_learner = MultiModalPromptLearner(cfg, classnames, clip_model)
+
+        self.prompt_learner = AdapterLearner(cfg, classnames, clip_model)
         self.tokenized_prompts = self.prompt_learner.tokenized_prompts
         self.image_encoder = clip_model.visual
         self.text_encoder = TextEncoder(clip_model)
         self.logit_scale = clip_model.logit_scale
         self.dtype = clip_model.dtype
+        self.text_features_for_inference = None
+
+    def encode_text(self, prompts, tokenized_prompts, text_adapter_func=None):
+        if text_adapter_func is not None:
+            text_features = self.text_encoder(
+                prompts, tokenized_prompts, text_adapter_func
+            )
+        else:
+            text_features = self.text_encoder(
+                prompts, tokenized_prompts
+            )
+        return text_features
+    
+    def encode_image(self, image, visual_adapter_func=None):
+        if visual_adapter_func is not None:
+            image_features = self.image_encoder(
+                [image.type(self.dtype), visual_adapter_func]
+            )
+        else:
+            image_features = self.image_encoder(
+                image.type(self.dtype)
+            )
+        return image_features
+
 
     def only_image_outputs(self, image):
         with torch.no_grad():
-            tokenized_prompts = self.tokenized_prompts
-            logit_scale = self.logit_scale.exp() 
-            prompts, shared_ctx, deep_compound_prompts_text, deep_compound_prompts_vision = self.prompt_learner()  
-            image_features = self.image_encoder(image.type(self.dtype), shared_ctx, deep_compound_prompts_vision) 
-            image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+            token_embedding, text_adapter_func, visual_adapter_func = self.prompt_learner()
+            tokenized_prompts = self.tokenized_prompts 
+            if self.prompt_learner.training:
+                text_features = self.encode_text(
+                    token_embedding, tokenized_prompts, text_adapter_func
+                )
+            else:
+                if self.text_features_for_inference is None:
+                    self.text_features_for_inference = self.encode_text(
+                        token_embedding, tokenized_prompts, text_adapter_func
+                    )   
+                text_features = self.text_features_for_inference 
+            image_features = self.encode_image(image, visual_adapter_func) 
+            image_features = F.normalize(image_features, dim=-1) 
             return image_features
 
-    def forward(self, image, image_oth=None):
+    def forward(self, image, stus=None):
+        token_embedding, text_adapter_func, visual_adapter_func = self.prompt_learner(stus)
         tokenized_prompts = self.tokenized_prompts
+
+        if self.prompt_learner.training:
+            text_features = self.encode_text(
+                token_embedding, tokenized_prompts, text_adapter_func
+            )
+        else:
+            if self.text_features_for_inference is None:
+                self.text_features_for_inference = self.encode_text(
+                    token_embedding, tokenized_prompts, text_adapter_func
+                )   
+            text_features = self.text_features_for_inference
+
+        image_features = self.encode_image(image, visual_adapter_func)
+
+        text_features = F.normalize(text_features, dim=-1)
+        image_features = F.normalize(image_features, dim=-1)
+
         logit_scale = self.logit_scale.exp()
-
-        prompts, shared_ctx, deep_compound_prompts_text, deep_compound_prompts_vision = self.prompt_learner(image_oth)
-        text_features = self.text_encoder(prompts, tokenized_prompts, deep_compound_prompts_text)
-        image_features = self.image_encoder(image.type(self.dtype), shared_ctx, deep_compound_prompts_vision)
-
-        image_features = image_features / image_features.norm(dim=-1, keepdim=True)
-        text_features = text_features / text_features.norm(dim=-1, keepdim=True)
         logits = logit_scale * image_features @ text_features.t()
-     
+
         return logits
 
 
-def _get_clones(module, N):
-    return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
-
-
 @TRAINER_REGISTRY.register()
-class MaPLe_REDIS(TrainerX):
+class MultiModalAdapter_LOREAL(TrainerX):
+
     def check_cfg(self, cfg):
-        assert cfg.TRAINER.MAPLE.PREC in ["fp16", "fp32", "amp"]
+        assert cfg.TRAINER.MMADAPTER.PREC in ["fp16", "fp32", "amp"]
 
     def build_model(self):
         cfg = self.cfg
@@ -364,24 +432,29 @@ class MaPLe_REDIS(TrainerX):
 
         print(f"Loading CLIP (backbone: {cfg.MODEL.BACKBONE.NAME})")
         clip_model = load_clip_to_cpu(cfg)
-
-        if cfg.TRAINER.MAPLE.PREC == "fp32" or cfg.TRAINER.MAPLE.PREC == "amp":
+        
+        if cfg.TRAINER.MMADAPTER.PREC == "fp32" or cfg.TRAINER.MMADAPTER.PREC == "amp":
             # CLIP's default precision is fp16
             clip_model.float()
 
+
         # print("Building custom CLIP")
         # self.model = CustomCLIP(cfg, classnames, clip_model) 
-        # print("Turning off gradients in both the image and the text encoder")
-        # name_to_update = "prompt_learner" 
+        # print("Turning off gradients in both the image and the text encoder") 
         # for name, param in self.model.named_parameters():
-        #     if name_to_update not in name:
-        #         # Make sure that VPT prompts are updated
-        #         if "VPT" in name:
-        #             param.requires_grad_(True)
-        #         else:
-        #             param.requires_grad_(False)
-  
-  
+        #     if "text_adapter" not in name and "visual_adapter" not in name and "shared_adapter" not in name:
+        #         param.requires_grad_(False) 
+        # # Double check
+        # num_trainable_params = 0
+        # enabled = set()
+        # for name, param in self.model.named_parameters():
+        #     if param.requires_grad:
+        #         enabled.add(name)
+        #         num_trainable_params += param.data.nelement()
+        # print(f"Parameters to be updated: {enabled}") 
+        # print(f"Number of trainable parameters: {num_trainable_params}") 
+
+
         # --------------------------------------------------
         print("Building custom CLIP")
         self.model = CustomCLIP(cfg, classnames, clip_model) 
@@ -389,16 +462,16 @@ class MaPLe_REDIS(TrainerX):
         map = {"FGVCAircraft":"fgvc_aircraft","DescribableTextures":"dtd","Caltech101":"caltech101","EuroSAT":"eurosat", 
             "Food101":"food101","OxfordFlowers":"oxford_flowers","StanfordCars":"stanford_cars","UCF101":"ucf101","SUN397":"sun397",
             "OxfordPets":"oxford_pets"}
-        DATASET = map[cfg.DATASET.NAME] # 
-        CONFIG = "vit_b16_c2_ep20_batch32_2ctx.yaml"
-        TOSI = cfg.POW.TOSIZE
+        DATASET = map[cfg.DATASET.NAME]  
+        CONFIG = "vit_b16_ep5.yaml"
+        TOSI = cfg.LOREAL.TOSIZE
         SEED = cfg.SEED 
         model_path = f"PATH/output/{METHOD}/base2new/train_base/{DATASET}/{METHOD}_stage2_students_pretraining_second/{TOSI}/{CONFIG}/seed{SEED}/prompt_learner/model.pth.tar-{cfg.OPTIM.MAX_EPOCH}"
         checkpoint = load_checkpoint(model_path)
         state_dict = checkpoint["state_dict"]  
-        if "token_prefix" in state_dict: # coop does not need this
+        if "token_prefix" in state_dict: 
             del state_dict["token_prefix"]
-        if "token_suffix" in state_dict: # coop does not need this
+        if "token_suffix" in state_dict: 
             del state_dict["token_suffix"]
             
         self.model.prompt_learner.load_state_dict(state_dict, strict=False)
@@ -407,8 +480,8 @@ class MaPLe_REDIS(TrainerX):
             if "prompt_learner" not in name:
                 param.requires_grad_(False) 
         # ----------------------------------------------------
-  
-  
+
+
         # -------------------------------------------------- 
         clip_model_teacher = load_clip_to_cpu(cfg)
         self.model_teacher = CustomCLIP(cfg, classnames, clip_model_teacher) 
@@ -427,22 +500,14 @@ class MaPLe_REDIS(TrainerX):
             if "prompt_learner" not in name:
                 param.requires_grad_(False)
         # ----------------------------------------------------
-   
  
+        self.model.to(self.device)
         # NOTE: only give prompt_learner to the optimizer
-        self.optim = build_optimizer(self.model, cfg.OPTIM)
+        self.optim = build_optimizer(self.model.prompt_learner, cfg.OPTIM)
         self.sched = build_lr_scheduler(self.optim, cfg.OPTIM)
-        self.register_model("prompt_learner", self.model, self.optim, self.sched)
-        # self.register_model("prompt_learner2", self.model_teacher.prompt_learner, self.optim, self.sched) 
-
-        self.scaler = GradScaler() if cfg.TRAINER.MAPLE.PREC == "amp" else None
-
-        # Note that multi-gpu training could be slow because CLIP's size is
-        # big, which slows down the copy operation in DataParallel
-        device_count = torch.cuda.device_count()
-        if False:
-            print(f"Multiple GPUs detected (n_gpus={device_count}), use all of them!")
-            self.model = nn.DataParallel(self.model)
+        self.register_model("prompt_learner", self.model.prompt_learner, self.optim, self.sched) 
+        self.scaler = GradScaler() if cfg.TRAINER.MMADAPTER.PREC == "amp" else None
+ 
 
     def forward_backward(self, batch):
         image, niimage, label = self.parse_batch_train(batch) 
@@ -466,36 +531,24 @@ class MaPLe_REDIS(TrainerX):
              
         return loss_summary
 
-    def federated_avg(self): # self.distribute(idx)
-        import copy
-        w_glob = None 
-        w_local1 = self.model.prompt_learner.state_dict()
-        w_local2 = self.model_teacher.prompt_learner.state_dict()
-        w_glob = copy.deepcopy(w_local1)
-        for k in w_glob.keys():
-            w_glob[k] += w_local2[k] 
-        for k in w_glob.keys():
-            w_glob[k] = torch.div(w_glob[k], 2) 
-        self.model.prompt_learner.load_state_dict(w_glob, strict=False)
-        self.model_teacher.prompt_learner.load_state_dict(w_glob, strict=False)
-
     # def parse_batch_train(self, batch):
     #     input = batch["img"]
     #     label = batch["label"]
     #     input = input.to(self.device)
     #     label = label.to(self.device)
     #     return input, label
-    
+
     def parse_batch_train(self, batch):
         input = batch["img"]
         label = batch["label"]
         niinput = batch["niimg"] 
         niinput = niinput.to(self.device)
-        label = label.to(self.device)
         input = input.to(self.device)
+        label = label.to(self.device)
         return input, niinput, label
 
     def load_model(self, directory, epoch=None):
+
         if not directory:
             print("Note that load_model() is skipped as no pretrained model is given")
             return
@@ -519,16 +572,16 @@ class MaPLe_REDIS(TrainerX):
             epoch = checkpoint["epoch"]
 
             # Ignore fixed token vectors
-            if "prompt_learner.token_prefix" in state_dict: 
-                del state_dict["prompt_learner.token_prefix"]
-            if "prompt_learner.token_middle1" in state_dict:
-                del state_dict["prompt_learner.token_middle1"]
-            if "prompt_learner.token_middle2" in state_dict:
-                del state_dict["prompt_learner.token_middle2"]
-            if "prompt_learner.token_middle3" in state_dict:
-                del state_dict["prompt_learner.token_middle3"]
-            if "prompt_learner.token_suffix" in state_dict:
-                del state_dict["prompt_learner.token_suffix"]
+            if "token_prefix" in state_dict:
+                del state_dict["token_prefix"]
+            if "token_middle1" in state_dict:
+                del state_dict["token_middle1"]
+            if "token_middle2" in state_dict:
+                del state_dict["token_middle2"]
+            if "token_middle3" in state_dict:
+                del state_dict["token_middle3"]
+            if "token_suffix" in state_dict:
+                del state_dict["token_suffix"]
 
             print("Loading weights to {} " 'from "{}" (epoch = {})'.format(name, model_path, epoch))
             # set strict=False

@@ -50,7 +50,7 @@ SEVERITY="0"
 CONFIG="vit_b16_ep50.yaml"
 LOAD_EPOCH="50"
 BASE_TRAINER="CoOp"
-LOREAL_TRAINER="CoOp_REDIS"
+LOREAL_TRAINER="CoOp_LOREAL"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -95,7 +95,7 @@ esac
 
 if [[ "${#ATTR_ARR[@]}" -ne 5 ]]; then
   echo "--attributes must contain exactly five attributes." >&2
-  echo "The current CoOp_REDIS config follows the paper and defines ATT1..ATT5 only." >&2
+  echo "The current CoOp_LOREAL config follows the paper and defines ATT1..ATT5 only." >&2
   exit 2
 fi
 
@@ -161,10 +161,10 @@ build_loreal_opts() {
     LOREAL_OPTS+=("TRAINER.ATPROMPT.N_ATT${idx}" "$ATTR_TOKENS")
     LOREAL_OPTS+=("TRAINER.ATPROMPT.ATT${idx}_TEXT" "${ATTR_ARR[$i]}")
   done
-  LOREAL_OPTS+=(POW.DIM "$META_DIM")
-  LOREAL_OPTS+=(POW.COEF1 "$LAMBDA_HLD")
-  LOREAL_OPTS+=(POW.COEF2 "$LAMBDA_LLD")
-  LOREAL_OPTS+=(POW.TEMP 1.0)
+  LOREAL_OPTS+=(LOREAL.DIM "$META_DIM")
+  LOREAL_OPTS+=(LOREAL.COEF1 "$LAMBDA_HLD")
+  LOREAL_OPTS+=(LOREAL.COEF2 "$LAMBDA_LLD")
+  LOREAL_OPTS+=(LOREAL.TEMP 1.0)
   LOREAL_OPTS+=(TRAINER.PROMPTKD.KD_WEIGHT 1.0)
 }
 
@@ -192,7 +192,7 @@ for seed in "${SEED_ARR[@]}"; do
           --output-dir "$stage1_dir" \
           DATASET.NUM_SHOTS "$SHOTS" TRAINER.MODAL base2novel DATASET.SUBSAMPLE_CLASSES base \
           TEST.SPLIT val TRAINER.LEVEL 0 \
-          POW.SEVERITY "$SEVERITY" POW.OSIZE 224 POW.TOSIZE "$res" POW.FORCE "$FORCE" POW.KAIDANN 1
+          LOREAL.SEVERITY "$SEVERITY" LOREAL.OSIZE 224 LOREAL.TOSIZE "$res" LOREAL.FORCE "$FORCE" LOREAL.KAIDANN 1
       fi
 
       # Optional baseline evaluation of the stage-1 student on new LR classes.
@@ -203,7 +203,7 @@ for seed in "${SEED_ARR[@]}"; do
           --output-dir "$stage1_eval_dir" --model-dir "$stage1_dir" --load-epoch "$LOAD_EPOCH" --eval-only \
           DATASET.NUM_SHOTS "$SHOTS" TRAINER.MODAL base2novel DATASET.SUBSAMPLE_CLASSES new \
           TEST.SPLIT val TRAINER.LEVEL 1 INPUT.SIZE "$res" \
-          POW.SEVERITY "$SEVERITY" POW.OSIZE 224 POW.TOSIZE "$res" POW.FORCE True POW.KAIDANN 4
+          LOREAL.SEVERITY "$SEVERITY" LOREAL.OSIZE 224 LOREAL.TOSIZE "$res" LOREAL.FORCE True LOREAL.KAIDANN 4
       fi
 
       # Stage 2 in the paper: pretrain the low-resolution CoOp student.
@@ -214,7 +214,7 @@ for seed in "${SEED_ARR[@]}"; do
           --output-dir "$stage2_dir" \
           DATASET.NUM_SHOTS "$SHOTS" TRAINER.MODAL base2novel DATASET.SUBSAMPLE_CLASSES base \
           TEST.SPLIT val TRAINER.LEVEL 0 \
-          POW.SEVERITY "$SEVERITY" POW.OSIZE "$res" POW.TOSIZE "$res" POW.FORCE "$FORCE" POW.KAIDANN 2
+          LOREAL.SEVERITY "$SEVERITY" LOREAL.OSIZE "$res" LOREAL.TOSIZE "$res" LOREAL.FORCE "$FORCE" LOREAL.KAIDANN 2
       fi
 
       # Optional baseline evaluation of the stage-2 LR student on new LR classes.
@@ -225,7 +225,7 @@ for seed in "${SEED_ARR[@]}"; do
           --output-dir "$stage2_eval_dir" --model-dir "$stage2_dir" --load-epoch "$LOAD_EPOCH" --eval-only \
           DATASET.NUM_SHOTS "$SHOTS" TRAINER.MODAL base2novel DATASET.SUBSAMPLE_CLASSES new \
           TEST.SPLIT val TRAINER.LEVEL 1 INPUT.SIZE "$res" \
-          POW.SEVERITY "$SEVERITY" POW.OSIZE 224 POW.TOSIZE "$res" POW.FORCE True POW.KAIDANN 4
+          LOREAL.SEVERITY "$SEVERITY" LOREAL.OSIZE 224 LOREAL.TOSIZE "$res" LOREAL.FORCE True LOREAL.KAIDANN 4
       fi
 
       # Stage 3 in the paper: LOREAL self-distillation.
@@ -239,8 +239,8 @@ for seed in "${SEED_ARR[@]}"; do
           --output-dir "$stage3_dir" \
           DATASET.NUM_SHOTS "$SHOTS" TRAINER.MODAL base2novel DATASET.SUBSAMPLE_CLASSES base \
           TEST.SPLIT val TRAINER.LEVEL 0 \
-          POW.SEVERITY "$SEVERITY" POW.OSIZE "$res" POW.TOSIZE "$res" POW.FORCE "$FORCE" POW.KAIDANN 3 \
-          POW.STAGE1_DIR "$stage1_dir" POW.STAGE2_DIR "$stage2_dir" \
+          LOREAL.SEVERITY "$SEVERITY" LOREAL.OSIZE "$res" LOREAL.TOSIZE "$res" LOREAL.FORCE "$FORCE" LOREAL.KAIDANN 3 \
+          LOREAL.STAGE1_DIR "$stage1_dir" LOREAL.STAGE2_DIR "$stage2_dir" \
           "${LOREAL_OPTS[@]}"
       fi
 
@@ -253,7 +253,7 @@ for seed in "${SEED_ARR[@]}"; do
           --output-dir "$stage4_dir" --model-dir "$stage3_dir" --load-epoch "$LOAD_EPOCH" --eval-only \
           DATASET.NUM_SHOTS "$SHOTS" TRAINER.MODAL base2novel DATASET.SUBSAMPLE_CLASSES new \
           TEST.SPLIT val TRAINER.LEVEL 1 INPUT.SIZE "$res" \
-          POW.SEVERITY "$SEVERITY" POW.OSIZE 224 POW.TOSIZE "$res" POW.FORCE True POW.KAIDANN 4 \
+          LOREAL.SEVERITY "$SEVERITY" LOREAL.OSIZE 224 LOREAL.TOSIZE "$res" LOREAL.FORCE True LOREAL.KAIDANN 4 \
           "${LOREAL_OPTS[@]}"
       fi
     done

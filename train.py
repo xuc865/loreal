@@ -37,7 +37,7 @@ CUSTOM_DATASETS = [
 
 CUSTOM_TRAINERS = [
     "coop",
-    "coop_redis",
+    "coop_loreal",
 ]
 
 

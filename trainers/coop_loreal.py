@@ -172,7 +172,7 @@ class PromptLearner(nn.Module):
         self.name_lens = name_lens
         self.class_token_position = cfg.TRAINER.COOP.CLASS_TOKEN_POSITION
 
-        hidden_dim = cfg.POW.DIM
+        hidden_dim = cfg.LOREAL.DIM
         self.metanets = nn.ModuleList([
             nn.Sequential(OrderedDict([
                 ("linear1", nn.Linear(visual_dim, hidden_dim)),
@@ -278,7 +278,7 @@ class CustomCLIP(nn.Module):
         return logits 
   
 @TRAINER_REGISTRY.register()
-class CoOp_REDIS(TrainerX):
+class CoOp_LOREAL(TrainerX):
     """LOREAL self-distillation implemented on top of CoOp.
 
     This trainer demonstrates the CoOp example: load two pretrained CoOp
@@ -297,7 +297,7 @@ class CoOp_REDIS(TrainerX):
         Stage 3 loads both prompt learners and trains only meta-nets.
         """
         cfg = self.cfg
-        override = cfg.POW.STAGE1_DIR if stage_name == "stage1" else cfg.POW.STAGE2_DIR
+        override = cfg.LOREAL.STAGE1_DIR if stage_name == "stage1" else cfg.LOREAL.STAGE2_DIR
         if override:
             return override
 
@@ -360,7 +360,7 @@ class CoOp_REDIS(TrainerX):
             "ImageNetA": "imagenet_a",
             "ImageNetR": "imagenet_r",
         }
-        return cfg.POW.SYUME if cfg.POW.SYUME else name_map[cfg.DATASET.NAME]
+        return cfg.LOREAL.SYUME if cfg.LOREAL.SYUME else name_map[cfg.DATASET.NAME]
 
     def _load_prompt_checkpoint(self, prompt_learner, directory, epoch):
         # Stage 3 starts from two independently trained CoOp prompt learners.
@@ -394,7 +394,7 @@ class CoOp_REDIS(TrainerX):
         # --------------------------------------------------
         print("Building custom CLIP")
         self.model = CustomCLIP(cfg, classnames, clip_model) 
-        TOSI = cfg.POW.TOSIZE
+        TOSI = cfg.LOREAL.TOSIZE
         SEED = cfg.SEED 
         output_dir = osp.normpath(cfg.OUTPUT_DIR)
         CONFIG = (
@@ -459,7 +459,7 @@ class CoOp_REDIS(TrainerX):
         # Note that multi-gpu training could be slow because CLIP's size is
         # big, which slows down the copy operation in DataParallel
         device_count = torch.cuda.device_count() 
-        self.temperature = cfg.POW.TEMP # TRAINER.PROMPTKD.TEMPERATURE
+        self.temperature = cfg.LOREAL.TEMP # TRAINER.PROMPTKD.TEMPERATURE
   
         # Double check
         num_trainable_params = 0
@@ -504,7 +504,7 @@ class CoOp_REDIS(TrainerX):
         # Final objective from Sec. 3.4:
         # L = LCE + lambda1 * LHLD + lambda2 * (1/K) * LLLD.
         # The implemented LLD is averaged by cross_entropy over B*K entries,
-        # so POW.COEF2 directly corresponds to lambda2.
+        # so LOREAL.COEF2 directly corresponds to lambda2.
         loss_ce = F.cross_entropy(output, label)
         loss_hld = self.cfg.TRAINER.PROMPTKD.KD_WEIGHT * F.kl_div(
             F.log_softmax(output / self.temperature, dim=1),
@@ -514,7 +514,7 @@ class CoOp_REDIS(TrainerX):
         contexts_hr = self.model_teacher.prompt_learner.attribute_contexts(stu1)
         contexts_lr = self.model.prompt_learner.attribute_contexts(stu2)
         loss_lld = self.low_level_distillation(contexts_hr, contexts_lr)
-        loss = loss_ce + self.cfg.POW.COEF1 * loss_hld + self.cfg.POW.COEF2 * loss_lld
+        loss = loss_ce + self.cfg.LOREAL.COEF1 * loss_hld + self.cfg.LOREAL.COEF2 * loss_lld
         
         self.model_backward_and_update(loss)
         loss_summary = {

@@ -228,7 +228,7 @@ class VLPromptLearner(nn.Module):
         suffix = self.token_suffix
         # print(f'suffix size is {suffix.size()}')
 
-        if self.trainer_name == "REDIS" and self.train_modal == "base2novel":
+        if self.trainer_name == "LOREAL" and self.train_modal == "base2novel":
             # print(f'n_cls is {self.n_cls}')
             prefix = torch.cat([prefix, self.token_prefix2], dim=0)
             suffix = torch.cat([suffix, self.token_suffix2], dim=0)
@@ -298,7 +298,7 @@ class CustomCLIP_teacher(nn.Module):
 
 
 @TRAINER_REGISTRY.register()
-class REDIS(TrainerX):
+class LOREAL(TrainerX):
     def check_cfg(self, cfg):
         assert cfg.TRAINER.PROMPTKD.PREC in ["fp16", "fp32", "amp"]
 
