@@ -1,119 +1,98 @@
-<svg width="1280" height="520" viewBox="0 0 1280 520" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
-  <title id="title">LOREAL method overview</title>
-  <desc id="desc">A clean three-stage diagram: low-resolution image features feed attribute meta-nets, which generate attribute prompts for dual-student self-distillation.</desc>
+<svg width="1280" height="420" viewBox="0 0 1280 420" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">LOREAL method diagram</title>
+  <desc id="desc">Low-resolution visual features are converted into attribute prompt tokens and distilled between standard-resolution and low-resolution students.</desc>
   <style>
-    .title { font: 800 64px Arial, Helvetica, sans-serif; letter-spacing: 5px; fill: #ffffff; }
-    .subtitle { font: 600 22px Arial, Helvetica, sans-serif; fill: #cfe8ff; }
-    .panel-title { font: 800 24px Arial, Helvetica, sans-serif; fill: #ffffff; }
-    .panel-sub { font: 600 16px Arial, Helvetica, sans-serif; fill: #c6d8ea; }
-    .label { font: 700 15px Arial, Helvetica, sans-serif; fill: #0e1726; }
-    .dark-label { font: 700 15px Arial, Helvetica, sans-serif; fill: #e9f8ff; }
-    .formula { font: 700 18px "SFMono-Regular", Consolas, monospace; fill: #eaffff; }
-    .step { font: 800 13px Arial, Helvetica, sans-serif; fill: #0e1726; }
-    .flow { stroke-dasharray: 11 11; animation: flow 1.5s linear infinite; }
-    .soft { animation: soft 3s ease-in-out infinite; transform-origin: center; }
+    .panel-title { font: 800 22px Arial, Helvetica, sans-serif; fill: #ffffff; }
+    .small { font: 600 15px Arial, Helvetica, sans-serif; fill: #cbd5e1; }
+    .chip { font: 800 14px Arial, Helvetica, sans-serif; fill: #0f172a; }
+    .formula { font: 750 18px "SFMono-Regular", Consolas, monospace; fill: #e0faff; }
+    .flow { stroke-dasharray: 10 12; animation: flow 1.4s linear infinite; }
+    .pulse { animation: pulse 2.4s ease-in-out infinite; transform-origin: center; }
     @keyframes flow { to { stroke-dashoffset: -44; } }
-    @keyframes soft { 0%, 100% { opacity: .72; } 50% { opacity: 1; } }
+    @keyframes pulse { 0%,100% { opacity: .72; } 50% { opacity: 1; } }
   </style>
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1280" y2="520" gradientUnits="userSpaceOnUse">
+    <linearGradient id="bg" x1="0" y1="0" x2="1280" y2="420" gradientUnits="userSpaceOnUse">
       <stop stop-color="#0b1020"/>
-      <stop offset=".55" stop-color="#10253b"/>
-      <stop offset="1" stop-color="#19112f"/>
+      <stop offset=".55" stop-color="#10243a"/>
+      <stop offset="1" stop-color="#17112d"/>
     </linearGradient>
-    <linearGradient id="line" x1="110" y1="260" x2="1170" y2="260" gradientUnits="userSpaceOnUse">
+    <linearGradient id="edge" x1="90" y1="210" x2="1190" y2="210" gradientUnits="userSpaceOnUse">
       <stop stop-color="#38bdf8"/>
-      <stop offset=".5" stop-color="#34d399"/>
+      <stop offset=".52" stop-color="#22c55e"/>
       <stop offset="1" stop-color="#f59e0b"/>
     </linearGradient>
     <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
-      <stop stop-color="#ffffff" stop-opacity=".16"/>
-      <stop offset="1" stop-color="#ffffff" stop-opacity=".06"/>
+      <stop stop-color="#ffffff" stop-opacity=".14"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity=".055"/>
     </linearGradient>
-    <filter id="shadow" x="-10%" y="-15%" width="120%" height="130%">
-      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000000" flood-opacity=".28"/>
+    <filter id="shadow" x="-10%" y="-20%" width="120%" height="140%">
+      <feDropShadow dx="0" dy="16" stdDeviation="16" flood-color="#000000" flood-opacity=".28"/>
     </filter>
     <marker id="arrow" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto">
-      <path d="M2 2L10 6L2 10Z" fill="#93f5ff"/>
+      <path d="M2 2L10 6L2 10Z" fill="#a7f3d0"/>
     </marker>
   </defs>
 
-  <rect width="1280" height="520" rx="28" fill="url(#bg)"/>
-  <path d="M0 438C160 386 272 454 438 402C610 348 714 106 918 150C1082 185 1168 326 1280 274V520H0V438Z" fill="#38bdf8" opacity=".07"/>
-
-  <text x="64" y="82" class="title">LOREAL</text>
-  <text x="68" y="118" class="subtitle">Attribute-driven self-distillation for low-resolution prompt learning</text>
-  <rect x="68" y="142" width="170" height="28" rx="14" fill="#f59e0b"/>
-  <text x="88" y="162" class="step">CVPR 2026 HIGHLIGHT</text>
+  <rect width="1280" height="420" rx="26" fill="url(#bg)"/>
+  <path d="M0 333C163 291 270 355 430 306C610 251 705 89 918 128C1080 158 1165 257 1280 214V420H0V333Z" fill="#38bdf8" opacity=".07"/>
 
   <g filter="url(#shadow)">
-    <rect x="70" y="205" width="300" height="220" rx="22" fill="url(#panel)" stroke="#38bdf8" stroke-width="2"/>
-    <rect x="490" y="205" width="300" height="220" rx="22" fill="url(#panel)" stroke="#34d399" stroke-width="2"/>
-    <rect x="910" y="205" width="300" height="220" rx="22" fill="url(#panel)" stroke="#f59e0b" stroke-width="2"/>
+    <rect x="72" y="90" width="300" height="230" rx="22" fill="url(#panel)" stroke="#38bdf8" stroke-width="2"/>
+    <rect x="490" y="90" width="300" height="230" rx="22" fill="url(#panel)" stroke="#22c55e" stroke-width="2"/>
+    <rect x="908" y="90" width="300" height="230" rx="22" fill="url(#panel)" stroke="#f59e0b" stroke-width="2"/>
   </g>
 
-  <g transform="translate(70 205)">
-    <circle cx="34" cy="34" r="16" fill="#38bdf8"/>
-    <text x="29" y="39" class="step">1</text>
-    <text x="62" y="42" class="panel-title">Low-res visual cue</text>
-    <text x="32" y="76" class="panel-sub">Pixels are degraded, but attributes remain useful.</text>
-
-    <g transform="translate(42 105)">
-      <rect width="34" height="34" fill="#ef4444"/>
-      <rect x="40" width="34" height="34" fill="#f59e0b"/>
-      <rect x="80" width="34" height="34" fill="#22c55e"/>
-      <rect x="120" width="34" height="34" fill="#38bdf8"/>
-      <rect y="40" width="34" height="34" fill="#a855f7"/>
-      <rect x="40" y="40" width="34" height="34" fill="#06b6d4"/>
-      <rect x="80" y="40" width="34" height="34" fill="#84cc16"/>
-      <rect x="120" y="40" width="34" height="34" fill="#fb7185"/>
+  <g transform="translate(72 90)">
+    <text x="30" y="44" class="panel-title">Low-res image</text>
+    <g transform="translate(42 82)">
+      <rect width="35" height="35" fill="#ef4444"/>
+      <rect x="41" width="35" height="35" fill="#f59e0b"/>
+      <rect x="82" width="35" height="35" fill="#22c55e"/>
+      <rect x="123" width="35" height="35" fill="#38bdf8"/>
+      <rect y="41" width="35" height="35" fill="#a855f7"/>
+      <rect x="41" y="41" width="35" height="35" fill="#06b6d4"/>
+      <rect x="82" y="41" width="35" height="35" fill="#84cc16"/>
+      <rect x="123" y="41" width="35" height="35" fill="#fb7185"/>
     </g>
-    <rect x="192" y="122" width="70" height="38" rx="12" fill="#e0f2fe"/>
-    <text x="205" y="146" class="label">f_v</text>
-    <path d="M202 176H252" stroke="#93f5ff" stroke-width="4" stroke-linecap="round" class="soft"/>
+    <circle cx="220" cy="122" r="42" fill="#e0f2fe"/>
+    <text x="206" y="128" class="chip">f_v</text>
+    <text x="36" y="196" class="small">visual cues survive resolution loss</text>
   </g>
 
-  <path d="M386 315H470" stroke="url(#line)" stroke-width="5" marker-end="url(#arrow)" class="flow"/>
+  <path d="M392 205H470" stroke="url(#edge)" stroke-width="5" marker-end="url(#arrow)" class="flow"/>
 
-  <g transform="translate(490 205)">
-    <circle cx="34" cy="34" r="16" fill="#34d399"/>
-    <text x="29" y="39" class="step">2</text>
-    <text x="62" y="42" class="panel-title">Attribute meta-nets</text>
-    <text x="32" y="76" class="panel-sub">Each robust attribute gets visual-conditioned tokens.</text>
-    <text x="48" y="118" class="formula">S_k = M_k(f_v)</text>
-
-    <g transform="translate(34 145)">
-      <rect width="86" height="30" rx="8" fill="#38bdf8"/><text x="24" y="20" class="label">color</text>
-      <rect x="96" width="86" height="30" rx="8" fill="#34d399"/><text x="120" y="20" class="label">shape</text>
-      <rect x="192" width="64" height="30" rx="8" fill="#f59e0b"/><text x="212" y="20" class="label">size</text>
-      <rect y="42" width="112" height="30" rx="8" fill="#f472b6"/><text x="23" y="62" class="label">structure</text>
-      <rect x="124" y="42" width="94" height="30" rx="8" fill="#a78bfa"/><text x="145" y="62" class="label">outline</text>
+  <g transform="translate(490 90)">
+    <text x="30" y="44" class="panel-title">Attribute meta-nets</text>
+    <text x="44" y="88" class="formula">S_k = M_k(f_v)</text>
+    <g transform="translate(34 120)">
+      <rect width="86" height="32" rx="8" fill="#38bdf8"/><text x="24" y="21" class="chip">color</text>
+      <rect x="96" width="86" height="32" rx="8" fill="#22c55e"/><text x="119" y="21" class="chip">shape</text>
+      <rect x="192" width="64" height="32" rx="8" fill="#f59e0b"/><text x="211" y="21" class="chip">size</text>
+      <rect y="46" width="112" height="32" rx="8" fill="#f472b6"/><text x="23" y="67" class="chip">structure</text>
+      <rect x="124" y="46" width="96" height="32" rx="8" fill="#a78bfa"/><text x="146" y="67" class="chip">outline</text>
     </g>
+    <text x="36" y="206" class="small">attributes become visual prompt tokens</text>
   </g>
 
-  <path d="M806 315H890" stroke="url(#line)" stroke-width="5" marker-end="url(#arrow)" class="flow"/>
+  <path d="M810 205H888" stroke="url(#edge)" stroke-width="5" marker-end="url(#arrow)" class="flow"/>
 
-  <g transform="translate(910 205)">
-    <circle cx="34" cy="34" r="16" fill="#f59e0b"/>
-    <text x="29" y="39" class="step">3</text>
-    <text x="62" y="42" class="panel-title">Dual-student distillation</text>
-    <text x="32" y="76" class="panel-sub">Prompt semantics and predictions are aligned.</text>
-
-    <rect x="42" y="112" width="92" height="44" rx="10" fill="#dbeafe"/>
-    <text x="58" y="139" class="label">alpha HR</text>
-    <rect x="166" y="112" width="92" height="44" rx="10" fill="#dcfce7"/>
-    <text x="184" y="139" class="label">beta LR</text>
-    <path d="M138 128H160" stroke="#93f5ff" stroke-width="4" marker-end="url(#arrow)" class="flow"/>
-    <path d="M160 150H138" stroke="#fbbf24" stroke-width="4" marker-end="url(#arrow)" class="flow"/>
-
-    <rect x="48" y="178" width="82" height="28" rx="8" fill="#38bdf8"/>
-    <text x="74" y="197" class="label">LLD</text>
-    <rect x="170" y="178" width="82" height="28" rx="8" fill="#f59e0b"/>
-    <text x="196" y="197" class="label">HLD</text>
+  <g transform="translate(908 90)">
+    <text x="30" y="44" class="panel-title">Self-distillation</text>
+    <rect x="44" y="86" width="98" height="48" rx="11" fill="#dbeafe"/>
+    <text x="61" y="116" class="chip">alpha HR</text>
+    <rect x="168" y="86" width="98" height="48" rx="11" fill="#dcfce7"/>
+    <text x="185" y="116" class="chip">beta LR</text>
+    <path d="M146 102H164" stroke="#93f5ff" stroke-width="4" marker-end="url(#arrow)" class="flow"/>
+    <path d="M164 122H146" stroke="#fbbf24" stroke-width="4" marker-end="url(#arrow)" class="flow"/>
+    <rect x="52" y="166" width="82" height="31" rx="8" fill="#38bdf8" class="pulse"/>
+    <text x="78" y="186" class="chip">LLD</text>
+    <rect x="176" y="166" width="82" height="31" rx="8" fill="#f59e0b" class="pulse"/>
+    <text x="202" y="186" class="chip">HLD</text>
   </g>
 
-  <g transform="translate(220 462)">
-    <rect width="840" height="34" rx="17" fill="#020617" opacity=".72" stroke="#334155"/>
-    <text x="28" y="23" class="formula">Prompt: A photo of a [CLASS] with S1 [color] S2 [shape] S3 [size] S4 [structure] S5 [outline]</text>
+  <g transform="translate(258 358)">
+    <rect width="764" height="34" rx="17" fill="#020617" opacity=".72" stroke="#334155"/>
+    <text x="26" y="23" class="formula">A photo of a [CLASS] with S1 [color] S2 [shape] ... SK [attribute]</text>
   </g>
 </svg>

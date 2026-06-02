@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="docs/loreal-readme-hero.svg" alt="LOREAL: attribute-driven self-distillation for low-resolution prompt learning" width="100%">
-
 <h1>LOREAL</h1>
 
 <h3>Mitigating Low-Resolution Challenges in Prompt Learning with Attribute-Driven Self-Distillation</h3>
@@ -13,6 +11,8 @@
   <a href="docs/DATASETS.md"><img alt="Datasets" src="https://img.shields.io/badge/datasets-11%20benchmarks-7c3aed.svg"></a>
   <img alt="Low resolution" src="https://img.shields.io/badge/focus-low--resolution%20robustness-f97316.svg">
 </p>
+
+<img src="docs/loreal-readme-hero.svg" alt="LOREAL: attribute-driven self-distillation for low-resolution prompt learning" width="100%">
 
 <p>
   <b>LOREAL turns fragile class-only prompts into resolution-aware prompts.</b><br>
