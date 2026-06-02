@@ -7,10 +7,11 @@
 <h3>Mitigating Low-Resolution Challenges in Prompt Learning with Attribute-Driven Self-Distillation</h3>
 
 <p>
-  <a href="configs/trainers/CoOp_REDIS/vit_b16_ep50.yaml"><img alt="Trainer" src="https://img.shields.io/badge/trainer-CoOp__REDIS-00d4ff?style=for-the-badge"></a>
-  <a href="scripts/run_coop_loreal.sh"><img alt="Pipeline" src="https://img.shields.io/badge/pipeline-4%20stages-7c3aed?style=for-the-badge"></a>
-  <a href="docs/DATASETS.md"><img alt="Datasets" src="https://img.shields.io/badge/datasets-11%20benchmarks-22c55e?style=for-the-badge"></a>
-  <img alt="Low resolution" src="https://img.shields.io/badge/focus-low--resolution%20robustness-f97316?style=for-the-badge">
+  <img alt="CVPR 2026 Highlight" src="https://img.shields.io/badge/CVPR%202026-Highlight-dc2626.svg">
+  <a href="configs/trainers/CoOp_REDIS/vit_b16_ep50.yaml"><img alt="Trainer" src="https://img.shields.io/badge/trainer-CoOp_REDIS-0ea5e9.svg"></a>
+  <a href="scripts/run_coop_loreal.sh"><img alt="Pipeline" src="https://img.shields.io/badge/pipeline-4%20stages-16a34a.svg"></a>
+  <a href="docs/DATASETS.md"><img alt="Datasets" src="https://img.shields.io/badge/datasets-11%20benchmarks-7c3aed.svg"></a>
+  <img alt="Low resolution" src="https://img.shields.io/badge/focus-low--resolution%20robustness-f97316.svg">
 </p>
 
 <p>
@@ -24,10 +25,10 @@
 
 | Module | What changes | Why it matters |
 | --- | --- | --- |
-| <img src="https://img.shields.io/badge/01-Attribute%20Prompting-00d4ff?style=flat-square"> | Extends `A photo of a [CLASS]` into `S1 [color] S2 [shape] ... SK [attribute]` | The prompt no longer depends only on class names; it carries low-resolution-stable visual cues. |
-| <img src="https://img.shields.io/badge/02-Meta--Nets-22c55e?style=flat-square"> | Learns `S_k = M_k(f_v)` for every attribute | Attribute tokens are generated from image features instead of being static text parameters. |
-| <img src="https://img.shields.io/badge/03-Dual%20Students-a855f7?style=flat-square"> | Couples a standard-resolution student with a low-resolution student | The low-resolution branch learns from richer visual semantics without changing inference inputs. |
-| <img src="https://img.shields.io/badge/04-LLD%20%2B%20HLD-f97316?style=flat-square"> | Aligns both generated attribute contexts and output distributions | The model transfers fine-grained prompt semantics and high-level predictions together. |
+| <img src="https://img.shields.io/badge/01-Attribute%20Prompting-00d4ff.svg"> | Extends `A photo of a [CLASS]` into `S1 [color] S2 [shape] ... SK [attribute]` | The prompt no longer depends only on class names; it carries low-resolution-stable visual cues. |
+| <img src="https://img.shields.io/badge/02-Meta--Nets-22c55e.svg"> | Learns `S_k = M_k(f_v)` for every attribute | Attribute tokens are generated from image features instead of being static text parameters. |
+| <img src="https://img.shields.io/badge/03-Dual%20Students-a855f7.svg"> | Couples a standard-resolution student with a low-resolution student | The low-resolution branch learns from richer visual semantics without changing inference inputs. |
+| <img src="https://img.shields.io/badge/04-LLD%20%2B%20HLD-f97316.svg"> | Aligns both generated attribute contexts and output distributions | The model transfers fine-grained prompt semantics and high-level predictions together. |
 
 ## Method at a Glance
 
