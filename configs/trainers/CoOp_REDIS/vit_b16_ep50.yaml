@@ -1,0 +1,59 @@
+DATALOADER:
+  TRAIN_X:
+    BATCH_SIZE: 32
+  TEST:
+    BATCH_SIZE: 100
+  NUM_WORKERS: 2
+
+INPUT:
+  SIZE: 224
+  INTERPOLATION: "bicubic"
+  PIXEL_MEAN: [0.48145466, 0.4578275, 0.40821073]
+  PIXEL_STD: [0.26862954, 0.26130258, 0.27577711]
+  TRANSFORMS: ["random_resized_crop", "random_flip", "corruption", "normalize"]
+
+OPTIM:
+  NAME: "sgd"
+  LR: 0.002
+  MAX_EPOCH: 50
+  LR_SCHEDULER: "cosine"
+  WARMUP_EPOCH: 1
+  WARMUP_TYPE: "constant"
+  WARMUP_CONS_LR: 1e-5
+
+TRAIN:
+  PRINT_FREQ: 5
+
+MODEL:
+  BACKBONE:
+    NAME: "ViT-B/16"
+
+TRAINER:
+  COOP:
+    N_CTX: 16
+    CTX_INIT: ""
+    CSC: False
+    CLASS_TOKEN_POSITION: "end"
+    PREC: "fp16"
+  ATPROMPT:
+    USE_ATPROMPT: True
+    ATT_NUM: 5
+    N_ATT1: 2
+    N_ATT2: 2
+    N_ATT3: 2
+    N_ATT4: 2
+    N_ATT5: 2
+    ATT1_TEXT: "color"
+    ATT2_TEXT: "shape"
+    ATT3_TEXT: "size"
+    ATT4_TEXT: "structure"
+    ATT5_TEXT: "outline"
+  PROMPTKD:
+    TEMPERATURE: 1.0
+    KD_WEIGHT: 1.0
+
+POW:
+  DIM: 32
+  TEMP: 1.0
+  COEF1: 1.0
+  COEF2: 2.0

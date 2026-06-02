@@ -1,0 +1,21 @@
+.DS_Store
+*.swp
+*.swo
+__pycache__/
+*.py[cod]
+
+# Runtime outputs and checkpoints
+output/
+outputs/
+wandb/
+runs/
+*.pth
+*.pth.tar
+*.pth.tar-*
+*.pt
+*.ckpt
+
+# Local environments
+.venv/
+venv/
+env/
