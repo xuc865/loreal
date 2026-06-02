@@ -1,21 +1,51 @@
-# LOREAL
+<div align="center">
 
-## Mitigating Low-Resolution Challenges in Prompt Learning with Attribute-Driven Self-Distillation
+<img src="docs/loreal-readme-hero.svg" alt="LOREAL: attribute-driven self-distillation for low-resolution prompt learning" width="100%">
 
-LOREAL is a prompt self-distillation framework for improving the low-resolution robustness of vision-language models. Instead of relying only on class-level prompt tuning, LOREAL excavates resolution-robust attribute semantics and uses them to contextualize prompts with visual information from different resolutions.
+<h1>LOREAL</h1>
 
-This repository currently provides example code for applying LOREAL on top of CoOp. The example follows the paper's core recipe: train two CoOp students at different resolutions, share attribute meta-nets between them, and optimize the low-resolution student with both low-level attribute distillation and high-level prediction distillation.
+<h3>Mitigating Low-Resolution Challenges in Prompt Learning with Attribute-Driven Self-Distillation</h3>
 
-## Highlights
+<p>
+  <a href="configs/trainers/CoOp_REDIS/vit_b16_ep50.yaml"><img alt="Trainer" src="https://img.shields.io/badge/trainer-CoOp__REDIS-00d4ff?style=for-the-badge"></a>
+  <a href="scripts/run_coop_loreal.sh"><img alt="Pipeline" src="https://img.shields.io/badge/pipeline-4%20stages-7c3aed?style=for-the-badge"></a>
+  <a href="docs/DATASETS.md"><img alt="Datasets" src="https://img.shields.io/badge/datasets-11%20benchmarks-22c55e?style=for-the-badge"></a>
+  <img alt="Low resolution" src="https://img.shields.io/badge/focus-low--resolution%20robustness-f97316?style=for-the-badge">
+</p>
 
-- Attribute-driven prompts: LOREAL augments the base prompt with attribute slots `S_k [A_k]`, where `A_k` is a robust attribute and `S_k` is generated from visual features.
-- Cross-modality meta-nets: each attribute owns a lightweight meta-net `M_k`, mapping image features into learnable attribute prompt contents.
-- Dual-student self-distillation: one student receives standard-resolution images, while the other receives low-resolution images. The two students share meta-nets and exchange visual semantics across resolutions.
-- Low-Level Distillation (LLD): aligns generated attribute contexts across resolutions.
-- High-Level Distillation (HLD): aligns output prediction distributions with KL divergence.
-- Low-resolution inference: after distillation, the model uses low-resolution images and the learned meta-nets to build attribute-aware prompts at inference time.
+<p>
+  <b>LOREAL turns fragile class-only prompts into resolution-aware prompts.</b><br>
+  It excavates robust attribute semantics, generates visual-conditioned attribute tokens, and distills knowledge between standard-resolution and low-resolution students.
+</p>
 
-## Method Overview
+</div>
+
+## Core Innovation
+
+| Module | What changes | Why it matters |
+| --- | --- | --- |
+| <img src="https://img.shields.io/badge/01-Attribute%20Prompting-00d4ff?style=flat-square"> | Extends `A photo of a [CLASS]` into `S1 [color] S2 [shape] ... SK [attribute]` | The prompt no longer depends only on class names; it carries low-resolution-stable visual cues. |
+| <img src="https://img.shields.io/badge/02-Meta--Nets-22c55e?style=flat-square"> | Learns `S_k = M_k(f_v)` for every attribute | Attribute tokens are generated from image features instead of being static text parameters. |
+| <img src="https://img.shields.io/badge/03-Dual%20Students-a855f7?style=flat-square"> | Couples a standard-resolution student with a low-resolution student | The low-resolution branch learns from richer visual semantics without changing inference inputs. |
+| <img src="https://img.shields.io/badge/04-LLD%20%2B%20HLD-f97316?style=flat-square"> | Aligns both generated attribute contexts and output distributions | The model transfers fine-grained prompt semantics and high-level predictions together. |
+
+## Method at a Glance
+
+```text
+Low-resolution image
+        |
+        v
+Visual feature f_v -----> Attribute meta-nets M_k -----> S_k prompt tokens
+        |                         |                         |
+        |                         v                         v
+        |              S1 [color] S2 [shape] ... SK [attribute]
+        |                         |
+        v                         v
+  Student beta  <---- self-distillation ---->  Student alpha
+        |                LLD + HLD                 |
+        v                                          v
+Robust low-resolution prompt learning and inference
+```
 
 LOREAL starts from a prompt learning model such as CoOp and inserts attribute-aware prompt slots:
 
@@ -29,16 +59,13 @@ The learnable attribute contents are not static parameters. Given a visual featu
 S_k = M_k(f_v)
 ```
 
-During self-distillation, two students are pretrained at different resolutions:
-
-- Student alpha processes standard-resolution images.
-- Student beta processes low-resolution images.
-
-The students bridge their visual semantics across resolutions. The standard-resolution branch receives attribute contexts generated from low-resolution visual features, and the low-resolution branch receives attribute contexts generated from standard-resolution visual features. LLD aligns the generated attribute contexts, while HLD aligns the prediction distributions. The final objective is:
+During self-distillation, two students are pretrained at different resolutions. The standard-resolution branch receives attribute contexts generated from low-resolution visual features, and the low-resolution branch receives attribute contexts generated from standard-resolution visual features. LLD aligns the generated attribute contexts, while HLD aligns the prediction distributions:
 
 ```text
 L = L_CE + lambda1 * L_HLD + lambda2 * L_LLD
 ```
+
+This repository provides runnable code for applying LOREAL on top of CoOp. The example follows the paper's core recipe: train two CoOp students at different resolutions, share attribute meta-nets between them, and optimize the low-resolution student with both low-level attribute distillation and high-level prediction distillation.
 
 ## Code Map
 
