@@ -2,7 +2,7 @@
 
 <img src="docs/loreal-logo.png" alt="LOREAL logo" width="260">
 
-<h3>LOREAL: Mitigating Low-Resolution Challenges in Prompt Learning with Attribute-Driven Self-Distillation</h3>
+<h1>LOREAL: Mitigating Low-Resolution Challenges in Prompt Learning with Attribute-Driven Self-Distillation</h1>
 
 <p>
   <img alt="CVPR 2026 Highlight" src="https://img.shields.io/badge/CVPR%202026-Highlight-dc2626.svg">
