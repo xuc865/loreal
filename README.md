@@ -252,3 +252,27 @@ POW.STAGE1_DIR /path/to/stage1 POW.STAGE2_DIR /path/to/stage2
 - `scripts/run_coop_loreal.sh` is the recommended entry point for the provided example.
 - Dataset locations are controlled by `--data-root`; no personal hard-coded dataset path is required.
 - Root `train.py` registers the local datasets and the trainers used by the launch script.
+
+## Acknowledgements
+
+This repository is built on top of several excellent open-source projects:
+
+- [DPC](https://github.com/jreion/dpc)
+- [CoOp](https://github.com/KaiyangZhou/CoOp)
+- [ATPrompt](https://github.com/zhengli97/ATPrompt)
+
+We thank the authors and maintainers of these projects for releasing their code.
+
+## Citation
+
+If you find this repository useful, please cite our paper:
+
+```bibtex
+@inproceedings{wang2026loreal,
+  title={LOREAL: Mitigating Low-Resolution Challenges in Vision-Language Models with Attribute-driven Prompt Self-Distillation},
+  author={Wang, Xucong and Wang, Pengkun and Zhao, Zhe and Yu, Liheng and Mao, Rui and Wang, Yang},
+  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
+  pages={39152--39163},
+  year={2026}
+}
+```
