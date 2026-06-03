@@ -2,11 +2,10 @@
 
 <img src="docs/loreal-logo.png" alt="LOREAL logo" width="240">
 
-# LOREAL
-
-**Mitigating Low-Resolution Challenges in Prompt Learning with Attribute-Driven Self-Distillation**
+# LOREAL: Mitigating Low-Resolution Challenges in Prompt Learning with Attribute-Driven Self-Distillation
 
 <p>
+  <img alt="CVPR 2026 Highlight" src="https://img.shields.io/badge/CVPR%202026-Highlight-dc2626.svg">
   <img alt="Low resolution" src="https://img.shields.io/badge/focus-low--resolution%20robustness-f97316.svg">
   <img alt="Trainer" src="https://img.shields.io/badge/trainer-CoOp_LOREAL-0ea5e9.svg">
   <img alt="Pipeline" src="https://img.shields.io/badge/pipeline-4%20stages-16a34a.svg">
@@ -85,40 +84,9 @@ Dataset-specific layouts follow the CoOp/Dassl conventions. See `docs/DATASETS.m
 
 ## Run
 
-### Oxford Flowers Low-Resolution Base/New
-
-This script runs the staged low-resolution experiment:
-
-1. Train a standard-resolution CoOp teacher.
-2. Train a low-resolution CoOp baseline.
-3. Train LOREAL self-distillation.
-4. Evaluate base and new splits.
-
-```bash
-DATA_ROOT=/path/to/datasets \
-OUTPUT_ROOT=/path/to/runs \
-SEED=1 \
-RES=96 \
-RESET_LOREAL=1 \
-bash scripts/run_oxfordflowers_lr_base_new.sh
-```
-
-Results and logs are written under:
-
-```text
-$OUTPUT_ROOT/logs/CoOp_LOREAL/oxford_flowers/res$RES/seed$SEED/
-$OUTPUT_ROOT/output/CoOp_LOREAL/base2new/train_base/oxford_flowers/
-```
-
-The summary file is:
-
-```text
-$OUTPUT_ROOT/logs/CoOp_LOREAL/oxford_flowers/res$RES/seed$SEED/lr_base_new_summary.txt
-```
-
 ### General Runner
 
-For broader staged runs:
+Use `scripts/run_coop_loreal.sh` for staged experiments on any supported dataset:
 
 ```bash
 bash scripts/run_coop_loreal.sh \
@@ -127,6 +95,19 @@ bash scripts/run_coop_loreal.sh \
   --datasets oxford_flowers \
   --resolutions 96 \
   --seeds 1 \
+  --stage all
+```
+
+Run multiple datasets, resolutions, and seeds by passing comma-separated lists:
+
+```bash
+bash scripts/run_coop_loreal.sh \
+  --data-root /path/to/datasets \
+  --output-root /path/to/runs \
+  --datasets oxford_flowers,oxford_pets,caltech101 \
+  --resolutions 96,144,192 \
+  --seeds 1,2,3 \
+  --shots 16 \
   --stage all
 ```
 
@@ -141,9 +122,42 @@ Common options:
 | `--stage` | `all`, `loreal`, `stage1`, `stage2`, `stage3`, or `stage4` |
 | `--dry-run` | Print commands without executing them |
 
+The staged pipeline is:
+
+1. Train a standard-resolution CoOp teacher.
+2. Train a low-resolution CoOp baseline.
+3. Train LOREAL self-distillation.
+4. Evaluate the low-resolution base/new splits.
+
+### Example: Oxford Flowers
+
+For a compact Oxford Flowers run with a summary file, use:
+
+```bash
+DATA_ROOT=/path/to/datasets \
+OUTPUT_ROOT=/path/to/runs \
+SEED=1 \
+RES=96 \
+RESET_LOREAL=1 \
+bash scripts/run_oxfordflowers_lr_base_new.sh
+```
+
+For this example, results and logs are written under:
+
+```text
+$OUTPUT_ROOT/logs/CoOp_LOREAL/oxford_flowers/res$RES/seed$SEED/
+$OUTPUT_ROOT/output/CoOp_LOREAL/base2new/train_base/oxford_flowers/
+```
+
+The example summary file is:
+
+```text
+$OUTPUT_ROOT/logs/CoOp_LOREAL/oxford_flowers/res$RES/seed$SEED/lr_base_new_summary.txt
+```
+
 ## Useful Environment Overrides
 
-The Oxford Flowers script exposes the most common experiment knobs through environment variables:
+The example script exposes common experiment knobs through environment variables:
 
 ```bash
 SEED=2
