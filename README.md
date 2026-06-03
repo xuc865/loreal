@@ -7,7 +7,6 @@
 <p>
   <img alt="CVPR 2026 Highlight" src="https://img.shields.io/badge/CVPR%202026-Highlight-dc2626.svg">
   <img alt="Low resolution" src="https://img.shields.io/badge/focus-low--resolution%20robustness-f97316.svg">
-  <img alt="Trainer" src="https://img.shields.io/badge/trainer-CoOp_LOREAL-0ea5e9.svg">
   <img alt="Pipeline" src="https://img.shields.io/badge/pipeline-4%20stages-16a34a.svg">
 </p>
 
