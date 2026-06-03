@@ -190,18 +190,16 @@ class PromptLearner(nn.Module):
             nn.Sequential(OrderedDict([
                 ("linear1", nn.Linear(visual_dim, hidden_dim)),
                 ("relu", nn.ReLU(inplace=True)),
-                ("linear2", nn.Linear(hidden_dim, n_att * ctx_dim)),
+                ("linear2", nn.Linear(hidden_dim, ctx_dim)),
             ]))
             for n_att in (self.attr_token_counts or [1])
         ]).to(dtype)
-        gate_init = torch.full((len(self.metanets),), float(cfg.LOREAL.GATE_INIT), dtype=dtype)
-        self.attr_gates = nn.Parameter(gate_init)
 
     def attribute_contexts(self, image_features):
         """Return the K generated attribute contexts used by LLD.
 
-        Each item has shape [batch, M, Dt]. The meta-net directly generates M
-        distinct token embeddings for every attribute slot.
+        Each item has shape [batch, M, Dt]. The generated token is repeated M
+        times to fill the learnable attribute slots.
         """
         if not self.use_atp:
             return []
@@ -211,8 +209,7 @@ class PromptLearner(nn.Module):
         contexts = []
         for idx, n_att in enumerate(self.attr_token_counts):
             ctx = self.metanets[idx](image_features)
-            ctx = ctx.view(image_features.shape[0], n_att, self.ctx_dim)
-            ctx = ctx * self.attr_gates[idx]
+            ctx = ctx.unsqueeze(1).expand(-1, n_att, -1)
             contexts.append(ctx)
         return contexts
 
@@ -441,10 +438,7 @@ class CoOp_LOREAL(TrainerX):
         # Sec. 3.4 states that the VLM backbone is frozen and only attribute
         # prompt adaptation parameters are learnable during self-distillation.
         for name, param in model.named_parameters():
-            param.requires_grad_(
-                "prompt_learner.metanets" in name
-                or "prompt_learner.attr_gates" in name
-            )
+            param.requires_grad_("prompt_learner.metanets" in name)
 
     def build_model(self):
         cfg = self.cfg
@@ -490,14 +484,10 @@ class CoOp_LOREAL(TrainerX):
         self._load_prompt_checkpoint(self.model_teacher.prompt_learner, stage1_dir, cfg.OPTIM.MAX_EPOCH)
         # Fig. 4 marks the meta-net as shared. Keep separate CoOp contexts for
         # the two pretrained students, but bind both prompt learners to the
-        # exact same attribute adaptation modules so stage 3 optimizes one
-        # shared set.
+        # exact same meta-net module so stage 3 optimizes one shared set.
         self.model_teacher.prompt_learner.metanets = self.model.prompt_learner.metanets
-        self.model_teacher.prompt_learner.attr_gates = self.model.prompt_learner.attr_gates
         shared_metanet = self.model_teacher.prompt_learner.metanets is self.model.prompt_learner.metanets
-        shared_gates = self.model_teacher.prompt_learner.attr_gates is self.model.prompt_learner.attr_gates
         print(f"LOREAL shared meta-net object: {shared_metanet}")
-        print(f"LOREAL shared gate object: {shared_gates}")
         self.model_teacher.to(self.device) 
         self._set_loreal_trainable(self.model_teacher)
         # ----------------------------------------------------
