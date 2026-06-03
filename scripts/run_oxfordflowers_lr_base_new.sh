@@ -5,13 +5,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_DIR}"
 
-DATA_ROOT="${DATA_ROOT:-/mnt/workspace/wxc/datasets}"
+DATA_ROOT="${DATA_ROOT:-${REPO_DIR}/datasets}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_DIR}/runs}"
 DATASET="${DATASET:-oxford_flowers}"
 RES="${RES:-96}"
 SEED="${SEED:-1}"
 SHOTS="${SHOTS:-16}"
 CONFIG="${CONFIG:-vit_b16_ep50.yaml}"
+DATASET_CONFIG_FILE="${DATASET_CONFIG_FILE:-configs/datasets/${DATASET}.yaml}"
+BASE_CONFIG_FILE="${BASE_CONFIG_FILE:-configs/trainers/CoOp/${CONFIG}}"
+LOREAL_CONFIG_FILE="${LOREAL_CONFIG_FILE:-configs/trainers/CoOp_LOREAL/${CONFIG}}"
 LOAD_EPOCH="${LOAD_EPOCH:-50}"
 FORCE="${FORCE:-False}"
 RESET_LOREAL="${RESET_LOREAL:-0}"
@@ -28,6 +31,11 @@ LOREAL_ADAPTIVE_MAX_BASE="${LOREAL_ADAPTIVE_MAX_BASE:-0.5}"
 LOREAL_ADAPTIVE_POWER="${LOREAL_ADAPTIVE_POWER:-2.0}"
 LOREAL_PROMPT_ORDER="${LOREAL_PROMPT_ORDER:-ctx_attr_cls}"
 LOREAL_N_ATT="${LOREAL_N_ATT:-1}"
+LOREAL_ATT1_TEXT="${LOREAL_ATT1_TEXT:-color}"
+LOREAL_ATT2_TEXT="${LOREAL_ATT2_TEXT:-shape}"
+LOREAL_ATT3_TEXT="${LOREAL_ATT3_TEXT:-size}"
+LOREAL_ATT4_TEXT="${LOREAL_ATT4_TEXT:-structure}"
+LOREAL_ATT5_TEXT="${LOREAL_ATT5_TEXT:-outline}"
 PYTHON="${PYTHON:-/mnt/workspace/wxc/miniconda3/envs/lamp/bin/python}"
 
 # Keep broken or incompatible packages from ~/.local out of the conda env.
@@ -36,6 +44,14 @@ export PYTHONNOUSERSITE=1
 BASE_TRAINER="CoOp"
 LOREAL_TRAINER="CoOp_LOREAL"
 SEVERITY="0"
+
+for required_file in "${DATASET_CONFIG_FILE}" "${BASE_CONFIG_FILE}" "${LOREAL_CONFIG_FILE}"; do
+  if [[ ! -f "${required_file}" ]]; then
+    echo "Missing required config file: ${required_file}" >&2
+    echo "Set DATASET, DATASET_CONFIG_FILE, CONFIG, BASE_CONFIG_FILE, or LOREAL_CONFIG_FILE as needed." >&2
+    exit 2
+  fi
+done
 
 RUN_ROOT="${OUTPUT_ROOT}/output/${LOREAL_TRAINER}/base2new/train_base/${DATASET}"
 STAGE1_DIR="${RUN_ROOT}/${LOREAL_TRAINER}_stage1_students_pretraining_first/${CONFIG}/seed${SEED}"
@@ -69,11 +85,11 @@ LOREAL_OPTS=(
   TRAINER.ATPROMPT.N_ATT3 "${LOREAL_N_ATT}"
   TRAINER.ATPROMPT.N_ATT4 "${LOREAL_N_ATT}"
   TRAINER.ATPROMPT.N_ATT5 "${LOREAL_N_ATT}"
-  TRAINER.ATPROMPT.ATT1_TEXT color
-  TRAINER.ATPROMPT.ATT2_TEXT shape
-  TRAINER.ATPROMPT.ATT3_TEXT size
-  TRAINER.ATPROMPT.ATT4_TEXT structure
-  TRAINER.ATPROMPT.ATT5_TEXT outline
+  TRAINER.ATPROMPT.ATT1_TEXT "${LOREAL_ATT1_TEXT}"
+  TRAINER.ATPROMPT.ATT2_TEXT "${LOREAL_ATT2_TEXT}"
+  TRAINER.ATPROMPT.ATT3_TEXT "${LOREAL_ATT3_TEXT}"
+  TRAINER.ATPROMPT.ATT4_TEXT "${LOREAL_ATT4_TEXT}"
+  TRAINER.ATPROMPT.ATT5_TEXT "${LOREAL_ATT5_TEXT}"
   TRAINER.PROMPTKD.KD_WEIGHT 1.0
   LOREAL.DIM "${LOREAL_DIM}"
   LOREAL.TEMP 1.0
@@ -125,6 +141,9 @@ extract_acc() {
   echo "LOREAL low-resolution base/new experiment"
   echo "date=$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   echo "dataset=${DATASET}"
+  echo "dataset_config_file=${DATASET_CONFIG_FILE}"
+  echo "base_config_file=${BASE_CONFIG_FILE}"
+  echo "loreal_config_file=${LOREAL_CONFIG_FILE}"
   echo "resolution=${RES}"
   echo "seed=${SEED}"
   echo "shots=${SHOTS}"
@@ -141,6 +160,7 @@ extract_acc() {
   echo "loreal_adaptive_power=${LOREAL_ADAPTIVE_POWER}"
   echo "loreal_prompt_order=${LOREAL_PROMPT_ORDER}"
   echo "loreal_n_att=${LOREAL_N_ATT}"
+  echo "loreal_attr_texts=${LOREAL_ATT1_TEXT},${LOREAL_ATT2_TEXT},${LOREAL_ATT3_TEXT},${LOREAL_ATT4_TEXT},${LOREAL_ATT5_TEXT}"
   echo "baseline_lr_train=CoOp stage2 uses batch['niimg']; LOREAL.OSIZE=${RES}"
   echo "baseline_lr_base_test=stage2 after_train uses batch['niimg']; LOREAL.TOSIZE=${RES}"
   echo "baseline_lr_new_test=eval-only stage2 checkpoint uses batch['niimg']; LOREAL.TOSIZE=${RES}"
@@ -156,8 +176,8 @@ extract_acc() {
 # Its final test is also the 224-trained baseline tested on LR base classes.
 run_and_log stage1_standard_teacher \
   "${PYTHON}" train.py --root "${DATA_ROOT}" --seed "${SEED}" --trainer "${BASE_TRAINER}" \
-  --dataset-config-file "configs/datasets/${DATASET}.yaml" \
-  --config-file "configs/trainers/${BASE_TRAINER}/${CONFIG}" \
+  --dataset-config-file "${DATASET_CONFIG_FILE}" \
+  --config-file "${BASE_CONFIG_FILE}" \
   --output-dir "${STAGE1_DIR}" \
   "${BASE_OPTS[@]}" DATASET.SUBSAMPLE_CLASSES base TRAINER.LEVEL 0 \
   LOREAL.OSIZE 224 LOREAL.TOSIZE "${RES}" LOREAL.FORCE "${FORCE}" LOREAL.STAGE 1
@@ -165,8 +185,8 @@ run_and_log stage1_standard_teacher \
 # Stage 1 eval: evaluate the 224-trained baseline on LR new classes.
 run_and_log baseline_hr_train_lr_new_eval \
   "${PYTHON}" train.py --root "${DATA_ROOT}" --seed "${SEED}" --trainer "${BASE_TRAINER}" \
-  --dataset-config-file "configs/datasets/${DATASET}.yaml" \
-  --config-file "configs/trainers/${BASE_TRAINER}/${CONFIG}" \
+  --dataset-config-file "${DATASET_CONFIG_FILE}" \
+  --config-file "${BASE_CONFIG_FILE}" \
   --output-dir "${STAGE1_EVAL_DIR}" --model-dir "${STAGE1_DIR}" --load-epoch "${LOAD_EPOCH}" --eval-only \
   "${BASE_OPTS[@]}" DATASET.SUBSAMPLE_CLASSES new TRAINER.LEVEL 1 INPUT.SIZE "${RES}" \
   LOREAL.OSIZE 224 LOREAL.TOSIZE "${RES}" LOREAL.FORCE True LOREAL.STAGE 4
@@ -174,8 +194,8 @@ run_and_log baseline_hr_train_lr_new_eval \
 # Stage 2: low-resolution CoOp baseline. Its final test is the baseline LR base result.
 run_and_log baseline_lr_base_stage2 \
   "${PYTHON}" train.py --root "${DATA_ROOT}" --seed "${SEED}" --trainer "${BASE_TRAINER}" \
-  --dataset-config-file "configs/datasets/${DATASET}.yaml" \
-  --config-file "configs/trainers/${BASE_TRAINER}/${CONFIG}" \
+  --dataset-config-file "${DATASET_CONFIG_FILE}" \
+  --config-file "${BASE_CONFIG_FILE}" \
   --output-dir "${STAGE2_DIR}" \
   "${BASE_OPTS[@]}" DATASET.SUBSAMPLE_CLASSES base TRAINER.LEVEL 0 \
   INPUT.SIZE "${RES}" \
@@ -184,8 +204,8 @@ run_and_log baseline_lr_base_stage2 \
 # Stage 2 eval: evaluate the same low-resolution CoOp baseline on new classes.
 run_and_log baseline_lr_new_eval \
   "${PYTHON}" train.py --root "${DATA_ROOT}" --seed "${SEED}" --trainer "${BASE_TRAINER}" \
-  --dataset-config-file "configs/datasets/${DATASET}.yaml" \
-  --config-file "configs/trainers/${BASE_TRAINER}/${CONFIG}" \
+  --dataset-config-file "${DATASET_CONFIG_FILE}" \
+  --config-file "${BASE_CONFIG_FILE}" \
   --output-dir "${STAGE2_EVAL_DIR}" --model-dir "${STAGE2_DIR}" --load-epoch "${LOAD_EPOCH}" --eval-only \
   "${BASE_OPTS[@]}" DATASET.SUBSAMPLE_CLASSES new TRAINER.LEVEL 1 INPUT.SIZE "${RES}" \
   LOREAL.OSIZE 224 LOREAL.TOSIZE "${RES}" LOREAL.FORCE True LOREAL.STAGE 4
@@ -193,8 +213,8 @@ run_and_log baseline_lr_new_eval \
 # Stage 3: LOREAL self-distillation. Its final test is the LOREAL LR base result.
 run_and_log loreal_lr_base_stage3 \
   "${PYTHON}" train.py --root "${DATA_ROOT}" --seed "${SEED}" --trainer "${LOREAL_TRAINER}" \
-  --dataset-config-file "configs/datasets/${DATASET}.yaml" \
-  --config-file "configs/trainers/${LOREAL_TRAINER}/${CONFIG}" \
+  --dataset-config-file "${DATASET_CONFIG_FILE}" \
+  --config-file "${LOREAL_CONFIG_FILE}" \
   --output-dir "${STAGE3_DIR}" \
   "${BASE_OPTS[@]}" DATASET.SUBSAMPLE_CLASSES base TRAINER.LEVEL 0 \
   LOREAL.OSIZE "${RES}" LOREAL.TOSIZE "${RES}" LOREAL.FORCE "${FORCE}" LOREAL.STAGE 3 \
@@ -203,8 +223,8 @@ run_and_log loreal_lr_base_stage3 \
 # Stage 4: evaluate the distilled low-resolution LOREAL model on new classes.
 run_and_log loreal_lr_new_stage4 \
   "${PYTHON}" train.py --root "${DATA_ROOT}" --seed "${SEED}" --trainer "${LOREAL_TRAINER}" \
-  --dataset-config-file "configs/datasets/${DATASET}.yaml" \
-  --config-file "configs/trainers/${LOREAL_TRAINER}/${CONFIG}" \
+  --dataset-config-file "${DATASET_CONFIG_FILE}" \
+  --config-file "${LOREAL_CONFIG_FILE}" \
   --output-dir "${STAGE4_DIR}" --model-dir "${STAGE3_DIR}" --load-epoch "${LOAD_EPOCH}" --eval-only \
   "${BASE_OPTS[@]}" DATASET.SUBSAMPLE_CLASSES new TRAINER.LEVEL 1 INPUT.SIZE "${RES}" \
   LOREAL.OSIZE 224 LOREAL.TOSIZE "${RES}" LOREAL.FORCE True LOREAL.STAGE 4 \
@@ -213,10 +233,6 @@ run_and_log loreal_lr_new_stage4 \
 {
   echo "Key low-resolution results"
   echo "--------------------------"
-  extract_acc "Baseline 224->LR base" "${LOG_ROOT}/stage1_standard_teacher.log"
-  extract_acc "Baseline 224->LR new" "${LOG_ROOT}/baseline_hr_train_lr_new_eval.log"
-  extract_acc "Baseline LR base" "${LOG_ROOT}/baseline_lr_base_stage2.log"
-  extract_acc "Baseline LR new" "${LOG_ROOT}/baseline_lr_new_eval.log"
   extract_acc "LOREAL LR base" "${LOG_ROOT}/loreal_lr_base_stage3.log"
   extract_acc "LOREAL LR new" "${LOG_ROOT}/loreal_lr_new_stage4.log"
   echo

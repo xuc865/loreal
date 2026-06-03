@@ -48,7 +48,7 @@ At inference time, the low-resolution branch uses image-conditioned attribute pr
 | `configs/trainers/CoOp_LOREAL/` | LOREAL configs |
 | `configs/datasets/` | Dataset configs |
 | `scripts/run_coop_loreal.sh` | General staged LOREAL runner |
-| `scripts/run_oxfordflowers_lr_base_new.sh` | Oxford Flowers low-resolution base/new runner |
+| `scripts/run_oxfordflowers_lr_base_new.sh` | Dataset-parameterized low-resolution base/new summary runner |
 | `Dassl.pytorch/` | Local Dassl fork used by the trainers |
 
 ## Installation
@@ -129,30 +129,43 @@ The staged pipeline is:
 3. Train LOREAL self-distillation.
 4. Evaluate the low-resolution base/new splits.
 
-### Example: Oxford Flowers
+### Base/New Summary Script
 
-For a compact Oxford Flowers run with a summary file, use:
+For a compact base/new run with an explicit summary file, use `scripts/run_oxfordflowers_lr_base_new.sh`. Despite the historical filename, the script is dataset-parameterized through `DATASET`:
 
 ```bash
 DATA_ROOT=/path/to/datasets \
 OUTPUT_ROOT=/path/to/runs \
+DATASET=oxford_flowers \
 SEED=1 \
 RES=96 \
 RESET_LOREAL=1 \
 bash scripts/run_oxfordflowers_lr_base_new.sh
 ```
 
-For this example, results and logs are written under:
+Use another supported dataset by changing `DATASET`:
 
-```text
-$OUTPUT_ROOT/logs/CoOp_LOREAL/oxford_flowers/res$RES/seed$SEED/
-$OUTPUT_ROOT/output/CoOp_LOREAL/base2new/train_base/oxford_flowers/
+```bash
+DATA_ROOT=/path/to/datasets \
+OUTPUT_ROOT=/path/to/runs \
+DATASET=oxford_pets \
+SEED=1 \
+RES=96 \
+RESET_LOREAL=1 \
+bash scripts/run_oxfordflowers_lr_base_new.sh
 ```
 
-The example summary file is:
+Results and logs are written under:
 
 ```text
-$OUTPUT_ROOT/logs/CoOp_LOREAL/oxford_flowers/res$RES/seed$SEED/lr_base_new_summary.txt
+$OUTPUT_ROOT/logs/CoOp_LOREAL/$DATASET/res$RES/seed$SEED/
+$OUTPUT_ROOT/output/CoOp_LOREAL/base2new/train_base/$DATASET/
+```
+
+The summary file is:
+
+```text
+$OUTPUT_ROOT/logs/CoOp_LOREAL/$DATASET/res$RES/seed$SEED/lr_base_new_summary.txt
 ```
 
 ## Useful Environment Overrides
@@ -160,6 +173,7 @@ $OUTPUT_ROOT/logs/CoOp_LOREAL/oxford_flowers/res$RES/seed$SEED/lr_base_new_summa
 The example script exposes common experiment knobs through environment variables:
 
 ```bash
+DATASET=oxford_flowers
 SEED=2
 RES=96
 LOREAL_DIM=64
@@ -172,7 +186,7 @@ LOREAL_PROMPT_ORDER=ctx_attr_cls
 Example:
 
 ```bash
-SEED=2 RESET_LOREAL=1 LOREAL_DIM=64 bash scripts/run_oxfordflowers_lr_base_new.sh
+DATASET=oxford_pets SEED=2 RESET_LOREAL=1 LOREAL_DIM=64 bash scripts/run_oxfordflowers_lr_base_new.sh
 ```
 
 ## Acknowledgements
