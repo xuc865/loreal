@@ -81,15 +81,15 @@ class Classification(EvaluatorBase):
         results["error_rate"] = err
         results["macro_f1"] = macro_f1
 
-        MEMEA = "\n" if self.cfg.POW.KAIDANN == 1 else ""
-        MEME = f"=> COEF1 {self.cfg.POW.COEF1} COEF2 {self.cfg.POW.COEF2} NATT {self.cfg.TRAINER.ATPROMPT.N_ATT1} result * total: {self._total:,} * correct: {self._correct:,} * accuracy: {acc:.2f}% * error: {err:.2f}% * macro_f1: {macro_f1:.2f}%"
+        MEMEA = "\n" if self.cfg.LOREAL.STAGE == 1 else ""
+        MEME = f"=> COEF1 {self.cfg.LOREAL.COEF1} COEF2 {self.cfg.LOREAL.COEF2} NATT {self.cfg.TRAINER.ATPROMPT.N_ATT1} result * total: {self._total:,} * correct: {self._correct:,} * accuracy: {acc:.2f}% * error: {err:.2f}% * macro_f1: {macro_f1:.2f}%"
         print(MEME)
         
         AUX = ""
-        if self.cfg.POW.MYTH !=0:
-            AUX = str(self.cfg.POW.MYTH)
-        with open(self.cfg.POW.SAVE.replace("AAA", self.cfg.TRAINER.NAME.split("_")[0]+AUX),"a")  as f:
-            f.write(f"{MEMEA}OSIZE{self.cfg.POW.OSIZE} TOSIZE{self.cfg.POW.TOSIZE} SEVE: {self.cfg.POW.SEVERITY} SEED: {self.cfg.SEED} DATASET-split: {self.cfg.DATASET.NAME:<10}-{self.cfg.DATASET.SUBSAMPLE_CLASSES:<4} METHOD: {self.cfg.TRAINER.NAME:<15} SEVERITY: {self.cfg.POW.SEVERITY} KAIDANN: {self.cfg.POW.KAIDANN} "+MEME+'\n')
+        if self.cfg.LOREAL.MYTH !=0:
+            AUX = str(self.cfg.LOREAL.MYTH)
+        with open(self.cfg.LOREAL.SAVE.replace("AAA", self.cfg.TRAINER.NAME.split("_")[0]+AUX),"a")  as f:
+            f.write(f"{MEMEA}OSIZE{self.cfg.LOREAL.OSIZE} TOSIZE{self.cfg.LOREAL.TOSIZE} SEVE: {self.cfg.LOREAL.SEVERITY} SEED: {self.cfg.SEED} DATASET-split: {self.cfg.DATASET.NAME:<10}-{self.cfg.DATASET.SUBSAMPLE_CLASSES:<4} METHOD: {self.cfg.TRAINER.NAME:<15} SEVERITY: {self.cfg.LOREAL.SEVERITY} STAGE: {self.cfg.LOREAL.STAGE} "+MEME+'\n')
         f.close()
 
         if self._per_class_res is not None:

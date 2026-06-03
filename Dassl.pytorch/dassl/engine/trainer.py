@@ -156,8 +156,8 @@ class TrainerBase:
                 file_missing = True
                 break
 
-        print("cfg idea: ",self.cfg.POW.FORCE)
-        if file_missing or self.cfg.POW.FORCE:
+        print("cfg idea: ", self.cfg.LOREAL.FORCE)
+        if file_missing or self.cfg.LOREAL.FORCE:
             print("No checkpoint found, train from scratch")
             return 0
 
@@ -606,6 +606,9 @@ import torch, gc
 device = torch.device('cuda')
 
 def reset_and_sync():
+    if not torch.cuda.is_available():
+        gc.collect()
+        return
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats(device)
     gc.collect() 
@@ -632,7 +635,7 @@ class TrainerX(SimpleTrainer):
             # msa += time.time()-ta 
             # cnt += 1
             # [TEST] 显存占用  
-            query_mem = torch.cuda.max_memory_allocated() / (1024 * 1024) 
+            query_mem = torch.cuda.max_memory_allocated() / (1024 * 1024) if torch.cuda.is_available() else 0
 
             meet_freq = (self.batch_idx + 1) % self.cfg.TRAIN.PRINT_FREQ == 0
             only_few_batches = self.num_batches < self.cfg.TRAIN.PRINT_FREQ
@@ -677,12 +680,22 @@ class TrainerX(SimpleTrainer):
 
 
 
+def _cuda_stats_enabled():
+    return torch.cuda.is_available() and torch.device(device).type == "cuda"
+
+
 def sync_reset():
+    if not _cuda_stats_enabled():
+        gc.collect()
+        return
     torch.cuda.synchronize(device)
     torch.cuda.reset_peak_memory_stats(device)
     gc.collect()
 
 def print_stats(tag=""):
+    if not _cuda_stats_enabled():
+        print(f"[{tag}] cuda stats unavailable")
+        return
     torch.cuda.synchronize(device)
     print(f"[{tag}] max_alloc={torch.cuda.max_memory_allocated(device)/1024**2:.1f}MB "
           f"max_reserved={torch.cuda.max_memory_reserved(device)/1024**2:.1f}MB "

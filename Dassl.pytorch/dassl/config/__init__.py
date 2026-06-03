@@ -17,7 +17,7 @@ def clean_cfg(cfg, trainer):
     common_keys = {"NAME", "MODAL", "LEVEL", "ATPROMPT", "PROMPTKD"}
     trainer_key = trainer.upper() if trainer else ""
     dependency_keys = {
-        "COOP_REDIS": {"COOP", "ATPROMPT", "PROMPTKD"},
+        "COOP_LOREAL": {"COOP", "ATPROMPT", "PROMPTKD"},
     }
 
     keys = list(cfg.TRAINER.keys())

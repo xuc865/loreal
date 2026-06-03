@@ -1,118 +1,64 @@
 <div align="center">
 
-<img src="docs/loreal-logo.png" alt="LOREAL logo" width="260">
+<img src="docs/loreal-logo.png" alt="LOREAL logo" width="240">
 
-<h1>LOREAL: Mitigating Low-Resolution Challenges in Prompt Learning with Attribute-Driven Self-Distillation</h1>
+# LOREAL
+
+**Mitigating Low-Resolution Challenges in Prompt Learning with Attribute-Driven Self-Distillation**
 
 <p>
-  <img alt="CVPR 2026 Highlight" src="https://img.shields.io/badge/CVPR%202026-Highlight-dc2626.svg">
-  <a href="configs/trainers/CoOp_LOREAL/vit_b16_ep50.yaml"><img alt="Trainer" src="https://img.shields.io/badge/trainer-CoOp_LOREAL-0ea5e9.svg"></a>
-  <a href="scripts/run_coop_loreal.sh"><img alt="Pipeline" src="https://img.shields.io/badge/pipeline-4%20stages-16a34a.svg"></a>
-  <a href="docs/DATASETS.md"><img alt="Datasets" src="https://img.shields.io/badge/datasets-11%20benchmarks-7c3aed.svg"></a>
   <img alt="Low resolution" src="https://img.shields.io/badge/focus-low--resolution%20robustness-f97316.svg">
+  <img alt="Trainer" src="https://img.shields.io/badge/trainer-CoOp_LOREAL-0ea5e9.svg">
+  <img alt="Pipeline" src="https://img.shields.io/badge/pipeline-4%20stages-16a34a.svg">
 </p>
 
-<img src="docs/loreal-readme-hero.svg" alt="LOREAL: attribute-driven self-distillation for low-resolution prompt learning" width="100%">
-
-<p>
-  <b>LOREAL turns fragile class-only prompts into resolution-aware prompts.</b><br>
-  It excavates robust attribute semantics, generates visual-conditioned attribute tokens, and distills knowledge between standard-resolution and low-resolution students.
-</p>
+<img src="docs/loreal-readme-hero.svg" alt="LOREAL overview" width="100%">
 
 </div>
 
-## Core Innovation
+## Overview
 
-| Module | What changes | Why it matters |
-| --- | --- | --- |
-| <img src="https://img.shields.io/badge/01-Attribute%20Prompting-00d4ff.svg"> | Extends `A photo of a [CLASS]` into `S1 [color] S2 [shape] ... SK [attribute]` | The prompt no longer depends only on class names; it carries low-resolution-stable visual cues. |
-| <img src="https://img.shields.io/badge/02-Meta--Nets-22c55e.svg"> | Learns `S_k = M_k(f_v)` for every attribute | Attribute tokens are generated from image features instead of being static text parameters. |
-| <img src="https://img.shields.io/badge/03-Dual%20Students-a855f7.svg"> | Couples a standard-resolution student with a low-resolution student | The low-resolution branch learns from richer visual semantics without changing inference inputs. |
-| <img src="https://img.shields.io/badge/04-LLD%20%2B%20HLD-f97316.svg"> | Aligns both generated attribute contexts and output distributions | The model transfers fine-grained prompt semantics and high-level predictions together. |
+LOREAL is a prompt-learning framework for low-resolution vision-language recognition. It augments a CoOp-style prompt learner with attribute-conditioned prompt tokens and trains them through self-distillation between a standard-resolution branch and a low-resolution branch.
 
-## Method at a Glance
+The repository contains:
 
-```text
-Low-resolution image
-        |
-        v
-Visual feature f_v -----> Attribute meta-nets M_k -----> S_k prompt tokens
-        |                         |                         |
-        |                         v                         v
-        |              S1 [color] S2 [shape] ... SK [attribute]
-        |                         |
-        v                         v
-  Student beta  <---- self-distillation ---->  Student alpha
-        |                LLD + HLD                 |
-        v                                          v
-Robust low-resolution prompt learning and inference
-```
+- `CoOp` baseline training and evaluation.
+- `CoOp_LOREAL`, the LOREAL trainer built on top of CoOp.
+- Low-resolution image handling through Dassl transforms.
+- Scripts for staged base-to-new experiments.
+- Dataset configs for common prompt-learning benchmarks.
 
-LOREAL starts from a prompt learning model such as CoOp and inserts attribute-aware prompt slots:
+## Method
 
-```text
-A photo of a [CLASS] with S1 [A1] S2 [A2] ... SK [AK]
-```
+LOREAL keeps the CLIP backbone frozen and learns prompt-side adaptation. Given image features, small meta-networks generate attribute prompt tokens such as color, shape, size, structure, and outline. A standard-resolution student and a low-resolution student are then coupled with:
 
-The learnable attribute contents are not static parameters. Given a visual feature `f_v`, LOREAL generates each attribute context through a meta-net:
+- Cross-entropy supervision on base classes.
+- High-level distillation between prediction distributions.
+- Low-level distillation between generated attribute contexts.
 
-```text
-S_k = M_k(f_v)
-```
+At inference time, the low-resolution branch uses image-conditioned attribute prompts for classification.
 
-During self-distillation, two students are pretrained at different resolutions. The standard-resolution branch receives attribute contexts generated from low-resolution visual features, and the low-resolution branch receives attribute contexts generated from standard-resolution visual features. LLD aligns the generated attribute contexts, while HLD aligns the prediction distributions:
+## Code Structure
 
-```text
-L = L_CE + lambda1 * L_HLD + lambda2 * L_LLD
-```
-
-This repository provides runnable code for applying LOREAL on top of CoOp. The example follows the paper's core recipe: train two CoOp students at different resolutions, share attribute meta-nets between them, and optimize the low-resolution student with both low-level attribute distillation and high-level prediction distillation.
-
-## Code Map
-
-| Concept | Implementation |
+| Path | Description |
 | --- | --- |
-| CoOp baseline trainer | `trainers/coop.py` |
-| LOREAL-on-CoOp trainer | `trainers/coop_loreal.py` |
-| Unified training entry | `train.py` |
-| Unified launch script | `scripts/run_coop_loreal.sh` |
-| CoOp config | `configs/trainers/CoOp/vit_b16_ep50.yaml` |
-| LOREAL config | `configs/trainers/CoOp_LOREAL/vit_b16_ep50.yaml` |
-| Dataset configs | `configs/datasets/*.yaml` |
+| `train.py` | Main training and evaluation entry point |
+| `trainers/coop.py` | CoOp baseline trainer |
+| `trainers/coop_loreal.py` | LOREAL trainer |
+| `configs/trainers/CoOp/` | CoOp configs |
+| `configs/trainers/CoOp_LOREAL/` | LOREAL configs |
+| `configs/datasets/` | Dataset configs |
+| `scripts/run_coop_loreal.sh` | General staged LOREAL runner |
+| `scripts/run_oxfordflowers_lr_base_new.sh` | Oxford Flowers low-resolution base/new runner |
+| `Dassl.pytorch/` | Local Dassl fork used by the trainers |
 
-Inside `trainers/coop_loreal.py`:
+## Installation
 
-| Paper component | Code location |
-| --- | --- |
-| CoOp base prompt `P0` | `PromptLearner.ctx` |
-| Attribute slots `S_k [A_k]` | `PromptLearner` |
-| Meta-nets `S_k = M_k(f_v)` | `PromptLearner.metanets` |
-| Cross-resolution bridge | `CustomCLIP.forward(..., student_visual=...)` |
-| LLD, Eq. (7) | `CoOp_LOREAL.low_level_distillation` |
-| HLD, Eq. (8) | `CoOp_LOREAL.forward_backward` |
-| Final objective | `loss_ce + LOREAL.COEF1 * loss_hld + LOREAL.COEF2 * loss_lld` |
-
-## Pipeline
-
-The example pipeline has four stages:
-
-1. `stage1`: pretrain a standard-resolution CoOp student.
-2. `stage2`: pretrain a low-resolution CoOp student.
-3. `stage3`: run LOREAL self-distillation with `CoOp_LOREAL`, loading both pretrained students and training the shared attribute meta-nets.
-4. `stage4`: evaluate the distilled low-resolution student on new classes.
-
-The unified script handles all directory wiring and checkpoint paths.
-
-## Environment
-
-Python 3.8 or 3.9 is recommended. Install PyTorch first according to your CUDA version.
+Create an environment with PyTorch installed for your CUDA version, then install the project dependencies:
 
 ```bash
-cd /Users/wxc/Documents/codes/LOREAL-main
-
-# Install torch/torchvision for your CUDA version first.
-# Example for CUDA 11.8:
-# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+git clone https://github.com/xuc865/loreal.git
+cd loreal
 
 pip install -r requirements.txt
 cd Dassl.pytorch
@@ -121,151 +67,111 @@ python setup.py develop
 cd ..
 ```
 
-If additional packages are missing at runtime, install the dependencies from `Dassl.pytorch/requirements.txt` first. The root `requirements.txt` contains lightweight CLIP/CoOp-side requirements.
+If CLIP assets are not already cached, the first run will download them automatically.
 
 ## Datasets
 
-Put all datasets under one root, for example `/data/TIP-data`, and pass it with `--data-root /data/TIP-data`.
+Put datasets under a single root directory, for example:
 
-See `docs/DATASETS.md` for download links. The table below lists the directory names and key files that the current dataset loaders read.
-
-| Script key | Expected layout |
-| --- | --- |
-| `imagenet` | `$DATA/imagenet/classnames.txt`, plus either `$DATA/imagenet/images/train,val` or `$DATA/imagenet/train,val` |
-| `caltech101` | `$DATA/caltech-101/101_ObjectCategories`, `split_zhou_Caltech101.json` |
-| `oxford_pets` | `$DATA/oxford_pets/images`, `annotations`, `split_zhou_OxfordPets.json` |
-| `stanford_cars` | `$DATA/stanford_cars/cars_train`, `cars_test`, `devkit`, `cars_test_annos_withlabels.mat`, `split_zhou_StanfordCars.json` |
-| `oxford_flowers` | `$DATA/oxford_flowers/jpg`, `imagelabels.mat`, `cat_to_name.json`, `split_zhou_OxfordFlowers.json` |
-| `food101` | `$DATA/food-101/images`, `meta`, `split_zhou_Food101.json` |
-| `fgvc_aircraft` | `$DATA/fgvc_aircraft/images`, `variants.txt`, `images_variant_train/val/test.txt` |
-| `sun397` | `$DATA/sun397/SUN397`, `split_zhou_SUN397.json` |
-| `dtd` | `$DATA/dtd/images`, `labels`, `imdb`, `split_zhou_DescribableTextures.json` |
-| `eurosat` | `$DATA/eurosat/2750`, `split_zhou_EuroSAT.json` |
-| `ucf101` | `$DATA/ucf101/UCF-101-midframes`, `split_zhou_UCF101.json` |
-| `imagenetv2` | `$DATA/imagenetv2/imagenetv2-matched-frequency-format-val`, `classnames.txt` |
-| `imagenet_sketch` | `$DATA/imagenet-sketch/images` or `$DATA/imagenet-sketch/sketch`, `classnames.txt` |
-| `imagenet_a` | `$DATA/imagenet-adversarial/imagenet-a`, `classnames.txt` |
-| `imagenet_r` | `$DATA/imagenet-rendition/imagenet-r`, `classnames.txt` |
-
-ImageNet-derived datasets reuse ImageNet's `classnames.txt`. If a dataset already exists somewhere else, create a symlink under `$DATA`:
-
-```bash
-ln -s /real/path/to/imagenet /data/TIP-data/imagenet
+```text
+/path/to/datasets/
+  oxford_flowers/
+  oxford_pets/
+  caltech-101/
+  ...
 ```
 
-## Quick Start
+Dataset-specific layouts follow the CoOp/Dassl conventions. See `docs/DATASETS.md` for dataset names and expected files.
 
-Start with a dry run to inspect the commands and output directories:
+## Run
+
+### Oxford Flowers Low-Resolution Base/New
+
+This script runs the staged low-resolution experiment:
+
+1. Train a standard-resolution CoOp teacher.
+2. Train a low-resolution CoOp baseline.
+3. Train LOREAL self-distillation.
+4. Evaluate base and new splits.
+
+```bash
+DATA_ROOT=/path/to/datasets \
+OUTPUT_ROOT=/path/to/runs \
+SEED=1 \
+RES=96 \
+RESET_LOREAL=1 \
+bash scripts/run_oxfordflowers_lr_base_new.sh
+```
+
+Results and logs are written under:
+
+```text
+$OUTPUT_ROOT/logs/CoOp_LOREAL/oxford_flowers/res$RES/seed$SEED/
+$OUTPUT_ROOT/output/CoOp_LOREAL/base2new/train_base/oxford_flowers/
+```
+
+The summary file is:
+
+```text
+$OUTPUT_ROOT/logs/CoOp_LOREAL/oxford_flowers/res$RES/seed$SEED/lr_base_new_summary.txt
+```
+
+### General Runner
+
+For broader staged runs:
 
 ```bash
 bash scripts/run_coop_loreal.sh \
-  --data-root /data/TIP-data \
-  --datasets oxford_pets \
+  --data-root /path/to/datasets \
+  --output-root /path/to/runs \
+  --datasets oxford_flowers \
   --resolutions 96 \
   --seeds 1 \
-  --stage loreal \
-  --dry-run
-```
-
-Run a minimal LOREAL experiment:
-
-```bash
-bash scripts/run_coop_loreal.sh \
-  --data-root /data/TIP-data \
-  --output-root /data/LOREAL-runs \
-  --datasets oxford_pets \
-  --resolutions 96 \
-  --seeds 1 \
-  --stage loreal
-```
-
-Run the common 11-dataset, 3-resolution, 3-seed setting:
-
-```bash
-bash scripts/run_coop_loreal.sh \
-  --data-root /data/TIP-data \
-  --output-root /data/LOREAL-runs \
-  --datasets imagenet,caltech101,oxford_pets,stanford_cars,oxford_flowers,food101,fgvc_aircraft,sun397,dtd,eurosat,ucf101 \
-  --resolutions 96,144,192 \
-  --seeds 1,2,3 \
-  --shots 16 \
   --stage all
 ```
 
-## Stage Selection
+Common options:
 
-| `--stage` | Meaning |
+| Option | Meaning |
 | --- | --- |
-| `all` | Run stage1, stage1_eval, stage2, stage2_eval, stage3, and stage4 |
-| `loreal` | Run the main training and evaluation path: stage1, stage2, stage3, and stage4 |
-| `stage1` | Train the standard-resolution student |
-| `stage2` | Train the low-resolution student |
-| `stage3` | Run LOREAL self-distillation; requires existing stage1/stage2 checkpoints |
-| `stage4` | Evaluate the distilled result; requires an existing stage3 checkpoint |
+| `--datasets` | Comma-separated dataset keys |
+| `--resolutions` | Comma-separated low-resolution sizes |
+| `--seeds` | Comma-separated random seeds |
+| `--shots` | Number of base-class shots |
+| `--stage` | `all`, `loreal`, `stage1`, `stage2`, `stage3`, or `stage4` |
+| `--dry-run` | Print commands without executing them |
 
-## LOREAL Configuration
+## Useful Environment Overrides
 
-The default setup follows the paper's five-attribute form:
+The Oxford Flowers script exposes the most common experiment knobs through environment variables:
 
 ```bash
---attributes color,shape,size,structure,outline
---attr-tokens 2
---meta-dim 32
---lambda-hld 1.0
---lambda-lld 2.0
+SEED=2
+RES=96
+LOREAL_DIM=64
+LOREAL_COEF1=0.5
+LOREAL_COEF2=1.0
+LOREAL_N_ATT=1
+LOREAL_PROMPT_ORDER=ctx_attr_cls
 ```
 
-Config mapping:
-
-| Option | Config key |
-| --- | --- |
-| Attribute text | `TRAINER.ATPROMPT.ATT1_TEXT` to `ATT5_TEXT` |
-| Learnable tokens per attribute | `TRAINER.ATPROMPT.N_ATT1` to `N_ATT5` |
-| Meta-net hidden dimension | `LOREAL.DIM` |
-| HLD coefficient `lambda1` | `LOREAL.COEF1` |
-| LLD coefficient `lambda2` | `LOREAL.COEF2` |
-| Override stage1 checkpoint path | `LOREAL.STAGE1_DIR` |
-| Override stage2 checkpoint path | `LOREAL.STAGE2_DIR` |
-
-The paper uses dataset-specific attributes generated by an LLM and chosen for low-resolution robustness. The default values are generic attributes that make the example runnable; for strict reproduction, replace them with GPT-4o-generated attributes for each dataset.
-
-## Outputs
-
-The script writes outputs under:
-
-```text
-$OUTPUT_ROOT/output/CoOp_LOREAL/base2new/train_base/$DATASET/
-  CoOp_LOREAL_stage1_students_pretraining_first/vit_b16_ep50.yaml/seed$SEED/
-  CoOp_LOREAL_stage2_students_pretraining_second/$RES/vit_b16_ep50.yaml/seed$SEED/
-  CoOp_LOREAL_stage3_students_sd/$RES/vit_b16_ep50.yaml/seed$SEED/
-  CoOp_LOREAL_stage4_students_new_test/$RES/vit_b16_ep50.yaml/seed$SEED/
-```
-
-Stage 3 automatically loads `prompt_learner/model.pth.tar-50` from the stage1 and stage2 directories. If checkpoints were moved manually, pass explicit paths to `train.py`:
+Example:
 
 ```bash
-LOREAL.STAGE1_DIR /path/to/stage1 LOREAL.STAGE2_DIR /path/to/stage2
+SEED=2 RESET_LOREAL=1 LOREAL_DIM=64 bash scripts/run_oxfordflowers_lr_base_new.sh
 ```
-
-## Practical Notes
-
-- `scripts/run_coop_loreal.sh` is the recommended entry point for the provided example.
-- Dataset locations are controlled by `--data-root`; no personal hard-coded dataset path is required.
-- Root `train.py` registers the local datasets and the trainers used by the launch script.
 
 ## Acknowledgements
 
-This repository is built on top of several excellent open-source projects:
+This codebase builds on:
 
-- [DPC](https://github.com/jreion/dpc)
 - [CoOp](https://github.com/KaiyangZhou/CoOp)
+- [Dassl.pytorch](https://github.com/KaiyangZhou/Dassl.pytorch)
+- [CLIP](https://github.com/openai/CLIP)
+- [DPC](https://github.com/jreion/dpc)
 - [ATPrompt](https://github.com/zhengli97/ATPrompt)
 
-We thank the authors and maintainers of these projects for releasing their code.
-
 ## Citation
-
-If you find this repository useful, please cite our paper:
 
 ```bibtex
 @inproceedings{wang2026loreal,

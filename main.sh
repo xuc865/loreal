@@ -60,7 +60,7 @@ for TOSI in 96 128 160 192; do # 48 64 80  112 144 176  208 224
         POW.OSIZE 224 \
         POW.TOSIZE  $TOSI \
         POW.FORCE False \
-        POW.KAIDANN 1
+        POW.STAGE 1
 
 
         # stage 1.5: need a test for baseline new-test
@@ -81,7 +81,7 @@ for TOSI in 96 128 160 192; do # 48 64 80  112 144 176  208 224
         POW.SEVERITY $SEVERITY \
         POW.OSIZE 224 \
         POW.TOSIZE $TOSI \
-        POW.KAIDANN 4
+        POW.STAGE 4
 
 
         # stage 2: two students pretraining - the second one
@@ -98,7 +98,7 @@ for TOSI in 96 128 160 192; do # 48 64 80  112 144 176  208 224
         POW.OSIZE $TOSI \
         POW.TOSIZE $TOSI \
         POW.FORCE False \
-        POW.KAIDANN 2
+        POW.STAGE 2
 
 
         # stage 2.5: need a test for baseline second new-test
@@ -119,7 +119,7 @@ for TOSI in 96 128 160 192; do # 48 64 80  112 144 176  208 224
         POW.SEVERITY $SEVERITY \
         POW.OSIZE 224 \
         POW.TOSIZE $TOSI \
-        POW.KAIDANN 4
+        POW.STAGE 4
 
         # stage 3: two students self-distillation and base test
         python train.py  --root $DATA --seed $SEED --trainer ${METHOD} \
@@ -135,7 +135,7 @@ for TOSI in 96 128 160 192; do # 48 64 80  112 144 176  208 224
         POW.OSIZE $TOSI \
         POW.TOSIZE $TOSI \
         POW.FORCE $3 \
-        POW.KAIDANN 3
+        POW.STAGE 3
  
         # stage 4: new test 
         python train.py  --root $DATA --seed $SEED --trainer ${METHOD} \
@@ -155,10 +155,13 @@ for TOSI in 96 128 160 192; do # 48 64 80  112 144 176  208 224
         POW.SEVERITY $SEVERITY \
         POW.OSIZE 224 \
         POW.TOSIZE $TOSI \
-        POW.KAIDANN 4
+        POW.STAGE 4
     
     done
 done
+
+
+RESET_LOREAL=1 LOREAL_LOGIT_BLEND=0.7 LOREAL_GATE_INIT=0.05 bash scripts/run_oxfordflowers_lr_base_new.sh
 
 
 

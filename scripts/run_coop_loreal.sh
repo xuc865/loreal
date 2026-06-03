@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
 usage() {
   cat <<'EOF'
 Run the complete CoOp + LOREAL pipeline.
@@ -9,7 +12,7 @@ Required:
   --data-root PATH          Dataset root containing folders such as imagenet/, oxford_pets/.
 
 Common options:
-  --output-root PATH        Output prefix. Default: .
+  --output-root PATH        Output prefix. Default: <repo>/runs
   --datasets LIST           Comma-separated dataset keys. Default: oxford_pets
   --resolutions LIST        Comma-separated LR sizes. Paper uses 96,144,192. Default: 96,144,192
   --seeds LIST              Comma-separated seeds. Paper reports 3 runs. Default: 1
@@ -33,7 +36,7 @@ EOF
 }
 
 DATA_ROOT=""
-OUTPUT_ROOT="."
+OUTPUT_ROOT="${REPO_DIR}/runs"
 DATASETS="oxford_pets"
 RESOLUTIONS="96,144,192"
 SEEDS="1"
@@ -78,6 +81,13 @@ if [[ -z "$DATA_ROOT" ]]; then
   usage
   exit 2
 fi
+
+case "$OUTPUT_ROOT" in
+  /*) ;;
+  *) OUTPUT_ROOT="${REPO_DIR}/${OUTPUT_ROOT}" ;;
+esac
+
+echo "Using output root: ${OUTPUT_ROOT}"
 
 IFS=',' read -r -a DATASET_ARR <<< "$DATASETS"
 IFS=',' read -r -a RES_ARR <<< "$RESOLUTIONS"
@@ -192,7 +202,7 @@ for seed in "${SEED_ARR[@]}"; do
           --output-dir "$stage1_dir" \
           DATASET.NUM_SHOTS "$SHOTS" TRAINER.MODAL base2novel DATASET.SUBSAMPLE_CLASSES base \
           TEST.SPLIT val TRAINER.LEVEL 0 \
-          LOREAL.SEVERITY "$SEVERITY" LOREAL.OSIZE 224 LOREAL.TOSIZE "$res" LOREAL.FORCE "$FORCE" LOREAL.KAIDANN 1
+          LOREAL.SEVERITY "$SEVERITY" LOREAL.OSIZE 224 LOREAL.TOSIZE "$res" LOREAL.FORCE "$FORCE" LOREAL.STAGE 1
       fi
 
       # Optional baseline evaluation of the stage-1 student on new LR classes.
@@ -203,7 +213,7 @@ for seed in "${SEED_ARR[@]}"; do
           --output-dir "$stage1_eval_dir" --model-dir "$stage1_dir" --load-epoch "$LOAD_EPOCH" --eval-only \
           DATASET.NUM_SHOTS "$SHOTS" TRAINER.MODAL base2novel DATASET.SUBSAMPLE_CLASSES new \
           TEST.SPLIT val TRAINER.LEVEL 1 INPUT.SIZE "$res" \
-          LOREAL.SEVERITY "$SEVERITY" LOREAL.OSIZE 224 LOREAL.TOSIZE "$res" LOREAL.FORCE True LOREAL.KAIDANN 4
+          LOREAL.SEVERITY "$SEVERITY" LOREAL.OSIZE 224 LOREAL.TOSIZE "$res" LOREAL.FORCE True LOREAL.STAGE 4
       fi
 
       # Stage 2 in the paper: pretrain the low-resolution CoOp student.
@@ -214,7 +224,7 @@ for seed in "${SEED_ARR[@]}"; do
           --output-dir "$stage2_dir" \
           DATASET.NUM_SHOTS "$SHOTS" TRAINER.MODAL base2novel DATASET.SUBSAMPLE_CLASSES base \
           TEST.SPLIT val TRAINER.LEVEL 0 \
-          LOREAL.SEVERITY "$SEVERITY" LOREAL.OSIZE "$res" LOREAL.TOSIZE "$res" LOREAL.FORCE "$FORCE" LOREAL.KAIDANN 2
+          LOREAL.SEVERITY "$SEVERITY" LOREAL.OSIZE "$res" LOREAL.TOSIZE "$res" LOREAL.FORCE "$FORCE" LOREAL.STAGE 2
       fi
 
       # Optional baseline evaluation of the stage-2 LR student on new LR classes.
@@ -225,7 +235,7 @@ for seed in "${SEED_ARR[@]}"; do
           --output-dir "$stage2_eval_dir" --model-dir "$stage2_dir" --load-epoch "$LOAD_EPOCH" --eval-only \
           DATASET.NUM_SHOTS "$SHOTS" TRAINER.MODAL base2novel DATASET.SUBSAMPLE_CLASSES new \
           TEST.SPLIT val TRAINER.LEVEL 1 INPUT.SIZE "$res" \
-          LOREAL.SEVERITY "$SEVERITY" LOREAL.OSIZE 224 LOREAL.TOSIZE "$res" LOREAL.FORCE True LOREAL.KAIDANN 4
+          LOREAL.SEVERITY "$SEVERITY" LOREAL.OSIZE 224 LOREAL.TOSIZE "$res" LOREAL.FORCE True LOREAL.STAGE 4
       fi
 
       # Stage 3 in the paper: LOREAL self-distillation.
@@ -239,7 +249,7 @@ for seed in "${SEED_ARR[@]}"; do
           --output-dir "$stage3_dir" \
           DATASET.NUM_SHOTS "$SHOTS" TRAINER.MODAL base2novel DATASET.SUBSAMPLE_CLASSES base \
           TEST.SPLIT val TRAINER.LEVEL 0 \
-          LOREAL.SEVERITY "$SEVERITY" LOREAL.OSIZE "$res" LOREAL.TOSIZE "$res" LOREAL.FORCE "$FORCE" LOREAL.KAIDANN 3 \
+          LOREAL.SEVERITY "$SEVERITY" LOREAL.OSIZE "$res" LOREAL.TOSIZE "$res" LOREAL.FORCE "$FORCE" LOREAL.STAGE 3 \
           LOREAL.STAGE1_DIR "$stage1_dir" LOREAL.STAGE2_DIR "$stage2_dir" \
           "${LOREAL_OPTS[@]}"
       fi
@@ -253,7 +263,8 @@ for seed in "${SEED_ARR[@]}"; do
           --output-dir "$stage4_dir" --model-dir "$stage3_dir" --load-epoch "$LOAD_EPOCH" --eval-only \
           DATASET.NUM_SHOTS "$SHOTS" TRAINER.MODAL base2novel DATASET.SUBSAMPLE_CLASSES new \
           TEST.SPLIT val TRAINER.LEVEL 1 INPUT.SIZE "$res" \
-          LOREAL.SEVERITY "$SEVERITY" LOREAL.OSIZE 224 LOREAL.TOSIZE "$res" LOREAL.FORCE True LOREAL.KAIDANN 4 \
+          LOREAL.SEVERITY "$SEVERITY" LOREAL.OSIZE 224 LOREAL.TOSIZE "$res" LOREAL.FORCE True LOREAL.STAGE 4 \
+          LOREAL.STAGE1_DIR "$stage1_dir" LOREAL.STAGE2_DIR "$stage2_dir" \
           "${LOREAL_OPTS[@]}"
       fi
     done

@@ -200,10 +200,10 @@ def build_transform(cfg, is_train=True, choices=None):
 
     if is_train:
         return [_build_transform_train(cfg, choices, target_size, normalize), \
-                _build_transform_train(cfg, choices, target_size, normalize, give_res=cfg.POW.OSIZE)]
+                _build_transform_train(cfg, choices, target_size, normalize, give_res=cfg.LOREAL.OSIZE)]
     else:
         return [_build_transform_test(cfg, choices, target_size, normalize), \
-                _build_transform_test(cfg, choices, target_size, normalize, give_res=cfg.POW.TOSIZE)]
+                _build_transform_test(cfg, choices, target_size, normalize, give_res=cfg.LOREAL.TOSIZE)]
 
 
 def _build_transform_train(cfg, choices, target_size, normalize, give_res=0):
