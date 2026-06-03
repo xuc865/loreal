@@ -567,12 +567,11 @@ class CoOp_LOREAL(TrainerX):
         stu2 = self.model.only_image_outputs(niimage)
         stu1 = self.model_teacher.only_image_outputs(image)
         
-        # Keep the supervised/distillation path aligned with inference:
-        # the HR teacher is conditioned on HR features, and the LR student is
-        # conditioned on LR features. LLD below still explicitly aligns the two
-        # meta-net outputs across resolutions.
-        tea_logits = self.model_teacher(image, stu1)
-        output = self.model(niimage, stu2)
+        # Eq. (6): cross-resolution bridge.
+        # The HR teacher is conditioned on LR visual semantics, while the LR
+        # student is conditioned on HR visual semantics.
+        tea_logits = self.model_teacher(image, stu2)
+        output = self.model(niimage, stu1)
 
         # Final objective from Sec. 3.4:
         # L = LCE + lambda1 * LHLD + lambda2 * (1/K) * LLLD.
