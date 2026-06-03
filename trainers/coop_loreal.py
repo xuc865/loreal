@@ -490,38 +490,15 @@ class CoOp_LOREAL(TrainerX):
         labels = torch.arange(attr_num, device=logits.device).unsqueeze(0).expand(batch_size, -1)
         return F.cross_entropy(logits.reshape(batch_size * attr_num, attr_num), labels.reshape(-1))
 
-    def aligned_mix_weight(self):
-        """Schedule the inference-aligned conditioning mix weight.
-
-        The original bridge is kept early in training. After
-        LOREAL.ALIGN_MIX_START of total epochs, the student prompt
-        conditioning feature linearly moves toward the LR inference feature.
-        """
-        max_weight = float(self.cfg.LOREAL.ALIGN_MIX_MAX)
-        if max_weight <= 0:
-            return 0.0
-
-        start = float(self.cfg.LOREAL.ALIGN_MIX_START)
-        start = min(max(start, 0.0), 1.0)
-        progress = (self.epoch + 1) / max(float(self.max_epoch), 1.0)
-        if progress <= start:
-            return 0.0
-
-        denom = max(1.0 - start, 1e-6)
-        return max_weight * min((progress - start) / denom, 1.0)
-
     def forward_backward(self, batch): 
         image, niimage, label = self.parse_batch_train(batch) 
         stu2 = self.model.only_image_outputs(niimage)
         stu1 = self.model_teacher.only_image_outputs(image)
         
-        # Keep the original LOREAL teacher bridge and LLD. The student prompt
-        # conditioning gradually moves from HR semantics toward the LR
-        # inference semantics.
-        tea_logits = self.model_teacher(image, stu2)
-        mix_w = self.aligned_mix_weight()
-        student_cond = F.normalize((1.0 - mix_w) * stu1 + mix_w * stu2, dim=-1)
-        output = self.model(niimage, student_cond)
+        # Align the supervised/distillation path with inference:
+        # teacher uses HR visual semantics, student uses LR visual semantics.
+        tea_logits = self.model_teacher(image, stu1)
+        output = self.model(niimage, stu2)
 
         # Final objective from Sec. 3.4:
         # L = LCE + lambda1 * LHLD + lambda2 * (1/K) * LLLD.
@@ -544,7 +521,6 @@ class CoOp_LOREAL(TrainerX):
             "loss_ce": loss_ce.item(),
             "loss_hld": loss_hld.item(),
             "loss_lld": loss_lld.item(),
-            "mix_w": mix_w,
             "acc": compute_accuracy(output, label)[0].item(),
         }
 
