@@ -48,7 +48,7 @@ At inference time, the low-resolution branch uses image-conditioned attribute pr
 | `configs/trainers/CoOp_LOREAL/` | LOREAL configs |
 | `configs/datasets/` | Dataset configs |
 | `scripts/run_coop_loreal.sh` | General staged LOREAL runner |
-| `scripts/run_oxfordflowers_lr_base_new.sh` | Dataset-parameterized low-resolution base/new summary runner |
+| `scripts/run_lr_base_new.sh` | Dataset-parameterized low-resolution base/new summary runner |
 | `Dassl.pytorch/` | Local Dassl fork used by the trainers |
 
 ## Installation
@@ -131,7 +131,7 @@ The staged pipeline is:
 
 ### Base/New Summary Script
 
-For a compact base/new run with an explicit summary file, use `scripts/run_oxfordflowers_lr_base_new.sh`. Despite the historical filename, the script is dataset-parameterized through `DATASET`:
+For a compact base/new run with an explicit summary file, use `scripts/run_lr_base_new.sh`. The script is dataset-parameterized through `DATASET`:
 
 ```bash
 DATA_ROOT=/path/to/datasets \
@@ -140,7 +140,7 @@ DATASET=oxford_flowers \
 SEED=1 \
 RES=96 \
 RESET_LOREAL=1 \
-bash scripts/run_oxfordflowers_lr_base_new.sh
+bash scripts/run_lr_base_new.sh
 ```
 
 Use another supported dataset by changing `DATASET`:
@@ -152,7 +152,7 @@ DATASET=oxford_pets \
 SEED=1 \
 RES=96 \
 RESET_LOREAL=1 \
-bash scripts/run_oxfordflowers_lr_base_new.sh
+bash scripts/run_lr_base_new.sh
 ```
 
 Results and logs are written under:
@@ -186,7 +186,7 @@ LOREAL_PROMPT_ORDER=ctx_attr_cls
 Example:
 
 ```bash
-DATASET=oxford_pets SEED=2 RESET_LOREAL=1 LOREAL_DIM=64 bash scripts/run_oxfordflowers_lr_base_new.sh
+DATASET=oxford_pets SEED=2 RESET_LOREAL=1 LOREAL_DIM=64 bash scripts/run_lr_base_new.sh
 ```
 
 ## Acknowledgements
