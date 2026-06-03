@@ -490,18 +490,18 @@ class CoOp_LOREAL(TrainerX):
         labels = torch.arange(attr_num, device=logits.device).unsqueeze(0).expand(batch_size, -1)
         return F.cross_entropy(logits.reshape(batch_size * attr_num, attr_num), labels.reshape(-1))
 
-    def aligned_ce_weight(self):
-        """Schedule the auxiliary inference-aligned CE weight.
+    def aligned_mix_weight(self):
+        """Schedule the inference-aligned conditioning mix weight.
 
         The original bridge is kept early in training. After
-        LOREAL.ALIGN_CE_START of total epochs, the aligned CE weight linearly
-        increases to LOREAL.ALIGN_CE_MAX.
+        LOREAL.ALIGN_MIX_START of total epochs, the student prompt
+        conditioning feature linearly moves toward the LR inference feature.
         """
-        max_weight = float(self.cfg.LOREAL.ALIGN_CE_MAX)
+        max_weight = float(self.cfg.LOREAL.ALIGN_MIX_MAX)
         if max_weight <= 0:
             return 0.0
 
-        start = float(self.cfg.LOREAL.ALIGN_CE_START)
+        start = float(self.cfg.LOREAL.ALIGN_MIX_START)
         start = min(max(start, 0.0), 1.0)
         progress = (self.epoch + 1) / max(float(self.max_epoch), 1.0)
         if progress <= start:
@@ -515,22 +515,21 @@ class CoOp_LOREAL(TrainerX):
         stu2 = self.model.only_image_outputs(niimage)
         stu1 = self.model_teacher.only_image_outputs(image)
         
-        # Keep the original LOREAL cross-resolution bridge for HLD/LLD, while
-        # gradually adding CE on the inference-aligned LR student path.
+        # Keep the original LOREAL teacher bridge and LLD. The student prompt
+        # conditioning gradually moves from HR semantics toward the LR
+        # inference semantics.
         tea_logits = self.model_teacher(image, stu2)
-        output_bridge = self.model(niimage, stu1)
-        output_align = self.model(niimage, stu2)
+        mix_w = self.aligned_mix_weight()
+        student_cond = F.normalize((1.0 - mix_w) * stu1 + mix_w * stu2, dim=-1)
+        output = self.model(niimage, student_cond)
 
         # Final objective from Sec. 3.4:
         # L = LCE + lambda1 * LHLD + lambda2 * (1/K) * LLLD.
         # The implemented LLD is averaged by cross_entropy over B*K entries,
         # so LOREAL.COEF2 directly corresponds to lambda2.
-        align_w = self.aligned_ce_weight()
-        loss_ce_bridge = F.cross_entropy(output_bridge, label)
-        loss_ce_align = F.cross_entropy(output_align, label)
-        loss_ce = (1.0 - align_w) * loss_ce_bridge + align_w * loss_ce_align
+        loss_ce = F.cross_entropy(output, label)
         loss_hld = self.cfg.TRAINER.PROMPTKD.KD_WEIGHT * F.kl_div(
-            F.log_softmax(output_bridge / self.temperature, dim=1),
+            F.log_softmax(output / self.temperature, dim=1),
             F.softmax(tea_logits.detach() / self.temperature, dim=1),
             reduction="batchmean",
         ) * (self.temperature * self.temperature)   
@@ -543,13 +542,10 @@ class CoOp_LOREAL(TrainerX):
         loss_summary = {
             "loss": loss.item(),
             "loss_ce": loss_ce.item(),
-            "loss_ce_bridge": loss_ce_bridge.item(),
-            "loss_ce_align": loss_ce_align.item(),
             "loss_hld": loss_hld.item(),
             "loss_lld": loss_lld.item(),
-            "align_w": align_w,
-            "acc": compute_accuracy(output_align, label)[0].item(),
-            "acc_bridge": compute_accuracy(output_bridge, label)[0].item(),
+            "mix_w": mix_w,
+            "acc": compute_accuracy(output, label)[0].item(),
         }
 
         if (self.batch_idx + 1) == self.num_batches:
