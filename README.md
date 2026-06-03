@@ -80,7 +80,7 @@ Put datasets under a single root directory, for example:
   ...
 ```
 
-Dataset-specific layouts follow the CoOp/Dassl conventions. See `docs/DATASETS.md` for dataset names and expected files.
+Dataset-specific layouts follow the CoOp/Dassl conventions. See [docs/DATASETS.md](docs/DATASETS.md) for dataset names and expected files.
 
 ## Run
 
