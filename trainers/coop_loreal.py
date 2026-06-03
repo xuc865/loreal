@@ -495,11 +495,10 @@ class CoOp_LOREAL(TrainerX):
         stu2 = self.model.only_image_outputs(niimage)
         stu1 = self.model_teacher.only_image_outputs(image)
         
-        # Eq. (6): cross-resolution bridge.
-        # teacher/alpha image x receives LR visual semantics S(f_beta_v),
-        # student/beta LR image x' receives standard semantics S(f_alpha_v).
-        tea_logits = self.model_teacher(image, stu2)  
-        output = self.model(niimage, stu1)
+        # Align the supervised/distillation path with inference:
+        # teacher uses HR visual semantics, student uses LR visual semantics.
+        tea_logits = self.model_teacher(image, stu1)
+        output = self.model(niimage, stu2)
 
         # Final objective from Sec. 3.4:
         # L = LCE + lambda1 * LHLD + lambda2 * (1/K) * LLLD.
