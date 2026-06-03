@@ -123,26 +123,21 @@ class PromptLearner(nn.Module):
         self.attr_num = len(self.attr_specs)
         self.attr_token_counts = [spec[0] for spec in self.attr_specs]
         self.attr_text_lens = [len(_tokenizer.encode(spec[1])) for spec in self.attr_specs]
-        self.prompt_order = str(cfg.LOREAL.PROMPT_ORDER).lower()
-        if self.prompt_order not in {"attr_ctx_cls", "ctx_attr_cls"}:
-            raise ValueError(
-                "LOREAL.PROMPT_ORDER must be one of: attr_ctx_cls, ctx_attr_cls"
-            )
         print(f"Use attribute prompts: {self.use_atp}")
         print(f"Number of attributes: {self.attr_num}")
-        print(f"LOREAL prompt order: {self.prompt_order}")
 
         if self.use_atp:
             prompts = []
             for name in classnames:
-                attr_parts = []
+                # Template from the paper:
+                # "A photo of a [CLS] with S1 [A1] ... SK [AK]".
+                # CoOp keeps the class name near the suffix; the learnable
+                # attribute tokens are materialized by meta-nets at runtime.
+                parts = []
                 for n_att, attr_text in self.attr_specs:
-                    attr_parts.append(" ".join(["X"] * n_att))
-                    attr_parts.append(attr_text)
-                if self.prompt_order == "attr_ctx_cls":
-                    parts = attr_parts + [prompt_prefix, f"{name}."]
-                else:
-                    parts = [prompt_prefix] + attr_parts + [f"{name}."]
+                    parts.append(" ".join(["X"] * n_att))
+                    parts.append(attr_text)
+                parts.extend([prompt_prefix, f"{name}."])
                 prompts.append(" ".join(parts))
         else:
             prompts = [prompt_prefix + " " + name + "." for name in classnames]
@@ -151,19 +146,14 @@ class PromptLearner(nn.Module):
         print(f"Number of context words (tokens): {n_ctx}")
 
         tokenized_prompts = torch.cat([clip.tokenize(p) for p in prompts])
-        base_prompts = [prompt_prefix + " " + name + "." for name in classnames]
-        base_tokenized_prompts = torch.cat([clip.tokenize(p) for p in base_prompts])
         with torch.no_grad():
             embedding = clip_model.token_embedding(tokenized_prompts).type(dtype)
-            base_embedding = clip_model.token_embedding(base_tokenized_prompts).type(dtype)
             print(f"embedding size is {embedding.size()}")
 
         self.register_buffer("token_prefix", embedding[:, :1, :])
-        self.register_buffer("base_token_prefix", base_embedding[:, :1, :])
-        self.register_buffer("base_token_suffix", base_embedding[:, 1 + n_ctx :, :])
 
         if self.use_atp:
-            offset = 1 + (n_ctx if self.prompt_order == "ctx_attr_cls" else 0)
+            offset = 1
             for idx, ((n_att, _), attr_text_len) in enumerate(
                 zip(self.attr_specs, self.attr_text_lens), start=1
             ):
@@ -172,34 +162,32 @@ class PromptLearner(nn.Module):
                 self.register_buffer(f"token_middle{idx}", middle)
                 offset += attr_text_len
 
-            suffix_start = offset if self.prompt_order == "ctx_attr_cls" else offset + n_ctx
-            self.register_buffer("token_suffix", embedding[:, suffix_start:, :])
+            self.register_buffer("token_suffix", embedding[:, offset + n_ctx :, :])
         else:
             self.register_buffer("token_suffix", embedding[:, 1 + n_ctx :, :])
 
         self.n_cls = n_cls
         self.n_ctx = n_ctx
         self.tokenized_prompts = tokenized_prompts
-        self.base_tokenized_prompts = base_tokenized_prompts
         self.name_lens = name_lens
         self.class_token_position = cfg.TRAINER.COOP.CLASS_TOKEN_POSITION
 
         hidden_dim = cfg.LOREAL.DIM
-        self.ctx_dim = ctx_dim
         self.metanets = nn.ModuleList([
             nn.Sequential(OrderedDict([
                 ("linear1", nn.Linear(visual_dim, hidden_dim)),
                 ("relu", nn.ReLU(inplace=True)),
                 ("linear2", nn.Linear(hidden_dim, ctx_dim)),
             ]))
-            for n_att in (self.attr_token_counts or [1])
+            for _ in range(max(self.attr_num, 1))
         ]).to(dtype)
 
     def attribute_contexts(self, image_features):
         """Return the K generated attribute contexts used by LLD.
 
-        Each item has shape [batch, M, Dt]. The generated token is repeated M
-        times to fill the learnable attribute slots.
+        Each item has shape [batch, M, Dt]. The same generated token is
+        repeated M times because the paper uses M learnable tokens per
+        attribute, and CoOp's text encoder expects token-level embeddings.
         """
         if not self.use_atp:
             return []
@@ -234,34 +222,22 @@ class PromptLearner(nn.Module):
         suffix = self.token_suffix.unsqueeze(0).expand(batch_size, -1, -1, -1)
         ctx = ctx.unsqueeze(0).expand(batch_size, -1, -1, -1)
 
-        attr_parts = []
+        parts = [prefix]
         for idx, attr_ctx in enumerate(attr_contexts, start=1):
             attr_ctx = attr_ctx.unsqueeze(1).expand(-1, self.n_cls, -1, -1)
             middle = getattr(self, f"token_middle{idx}")
             middle = middle.unsqueeze(0).expand(batch_size, -1, -1, -1)
-            attr_parts.extend([attr_ctx, middle])
-
-        if self.prompt_order == "attr_ctx_cls":
-            parts = [prefix] + attr_parts + [ctx, suffix]
-        else:
-            parts = [prefix, ctx] + attr_parts + [suffix]
+            parts.extend([attr_ctx, middle])
+        parts.extend([ctx, suffix])
 
         return torch.cat(parts, dim=2)
-
-    def forward_base(self):
-        ctx = self.ctx
-        if ctx.dim() == 2:
-            ctx = ctx.unsqueeze(0).expand(self.n_cls, -1, -1)
-        return torch.cat([self.base_token_prefix, ctx, self.base_token_suffix], dim=1)
 
 
 class CustomCLIP(nn.Module):
     def __init__(self, cfg, classnames, clip_model):
         super().__init__()
-        self.cfg = cfg
         self.prompt_learner = PromptLearner(cfg, classnames, clip_model)
         self.tokenized_prompts = self.prompt_learner.tokenized_prompts
-        self.base_tokenized_prompts = self.prompt_learner.base_tokenized_prompts
         self.image_encoder = clip_model.visual
         self.text_encoder = TextEncoder(clip_model)
         self.logit_scale = clip_model.logit_scale
@@ -273,19 +249,14 @@ class CustomCLIP(nn.Module):
             image_features = image_features / image_features.norm(dim=-1, keepdim=True)
             return image_features
 
-    def base_logits(self, image):
-        with torch.no_grad():
-            image_features = self.image_encoder(image.type(self.dtype))
-            image_features = image_features / image_features.norm(dim=-1, keepdim=True)
-            base_prompts = self.prompt_learner.forward_base()
-            base_text_features = self.text_encoder(base_prompts, self.base_tokenized_prompts)
-            base_text_features = base_text_features / base_text_features.norm(dim=-1, keepdim=True)
-            return self.logit_scale.exp() * image_features @ base_text_features.t()
-
     def forward(self, image, student_visual=None):
         image_features = self.image_encoder(image.type(self.dtype))
         image_features = image_features / image_features.norm(dim=-1, keepdim=True)
 
+        # LOREAL bridges the students across resolutions:
+        # the visual feature from the other student fills this student's
+        # attribute prompt slots. If no bridge feature is provided, inference
+        # uses the current image feature, matching Fig. 4(c).
         prompts = self.prompt_learner(student_visual if student_visual is not None else image_features)
         logit_scale = self.logit_scale.exp()
 
@@ -298,29 +269,6 @@ class CustomCLIP(nn.Module):
             text_features = text_features / text_features.norm(dim=-1, keepdim=True)
             text_features = text_features.reshape(batch_size, n_cls, -1)
             logits = logit_scale * torch.einsum("bd,bcd->bc", image_features, text_features)
-            use_eval_adaptive = (
-                (not self.training)
-                and bool(self.cfg.LOREAL.ADAPTIVE_BLEND)
-                and n_cls > 1
-            )
-            blend = 1.0 if self.training and not self.cfg.LOREAL.BLEND_TRAIN else float(self.cfg.LOREAL.LOGIT_BLEND)
-            if use_eval_adaptive or blend < 1.0:
-                base_prompts = self.prompt_learner.forward_base()
-                with torch.no_grad():
-                    base_text_features = self.text_encoder(base_prompts, self.base_tokenized_prompts)
-                    base_text_features = base_text_features / base_text_features.norm(dim=-1, keepdim=True)
-                    base_logits = logit_scale * image_features @ base_text_features.t()
-                if use_eval_adaptive:
-                    base_probs = F.softmax(base_logits, dim=1)
-                    top2 = base_probs.topk(2, dim=1).values
-                    margin = (top2[:, 0] - top2[:, 1]).clamp(min=0.0, max=1.0)
-                    base_weight = float(self.cfg.LOREAL.ADAPTIVE_MAX_BASE) * margin.pow(
-                        float(self.cfg.LOREAL.ADAPTIVE_POWER)
-                    )
-                    base_weight = base_weight.view(-1, 1)
-                    logits = (1.0 - base_weight) * logits + base_weight * base_logits
-                else:
-                    logits = blend * logits + (1.0 - blend) * base_logits
         else:
             tokenized_prompts = self.tokenized_prompts
             text_features = self.text_encoder(prompts, tokenized_prompts)
@@ -361,17 +309,9 @@ class CoOp_LOREAL(TrainerX):
             config_name,
             f"seed{seed}",
         )
-        stage4_tail = osp.join(
-            f"{method}_stage4_students_new_test",
-            str(to_size),
-            config_name,
-            f"seed{seed}",
-        )
 
         if output_dir.endswith(stage3_tail):
             base_dir = output_dir[: -len(stage3_tail)].rstrip(os.sep)
-        elif output_dir.endswith(stage4_tail):
-            base_dir = output_dir[: -len(stage4_tail)].rstrip(os.sep)
         else:
             dataset_name = self._dataset_key()
             base_dir = osp.join(
@@ -435,8 +375,8 @@ class CoOp_LOREAL(TrainerX):
         prompt_learner.load_state_dict(state_dict, strict=False)
 
     def _set_loreal_trainable(self, model):
-        # Sec. 3.4 states that the VLM backbone is frozen and only attribute
-        # prompt adaptation parameters are learnable during self-distillation.
+        # Sec. 3.4 states that the VLM backbone is frozen and only meta-nets
+        # are learnable during attribute-driven self-distillation.
         for name, param in model.named_parameters():
             param.requires_grad_("prompt_learner.metanets" in name)
 
@@ -486,8 +426,6 @@ class CoOp_LOREAL(TrainerX):
         # the two pretrained students, but bind both prompt learners to the
         # exact same meta-net module so stage 3 optimizes one shared set.
         self.model_teacher.prompt_learner.metanets = self.model.prompt_learner.metanets
-        shared_metanet = self.model_teacher.prompt_learner.metanets is self.model.prompt_learner.metanets
-        print(f"LOREAL shared meta-net object: {shared_metanet}")
         self.model_teacher.to(self.device) 
         self._set_loreal_trainable(self.model_teacher)
         # ----------------------------------------------------
@@ -558,9 +496,9 @@ class CoOp_LOREAL(TrainerX):
         stu1 = self.model_teacher.only_image_outputs(image)
         
         # Eq. (6): cross-resolution bridge.
-        # The HR teacher is conditioned on LR visual semantics, while the LR
-        # student is conditioned on HR visual semantics.
-        tea_logits = self.model_teacher(image, stu2)
+        # teacher/alpha image x receives LR visual semantics S(f_beta_v),
+        # student/beta LR image x' receives standard semantics S(f_alpha_v).
+        tea_logits = self.model_teacher(image, stu2)  
         output = self.model(niimage, stu1)
 
         # Final objective from Sec. 3.4:
@@ -573,32 +511,17 @@ class CoOp_LOREAL(TrainerX):
             F.softmax(tea_logits.detach() / self.temperature, dim=1),
             reduction="batchmean",
         ) * (self.temperature * self.temperature)   
-        base_logits = self.model.base_logits(niimage)
-        loss_bpd = F.kl_div(
-            F.log_softmax(output / self.temperature, dim=1),
-            F.softmax(base_logits.detach() / self.temperature, dim=1),
-            reduction="batchmean",
-        ) * (self.temperature * self.temperature)
         contexts_hr = self.model_teacher.prompt_learner.attribute_contexts(stu1)
         contexts_lr = self.model.prompt_learner.attribute_contexts(stu2)
         loss_lld = self.low_level_distillation(contexts_hr, contexts_lr)
-        loss_tce = F.cross_entropy(tea_logits, label)
-        loss = (
-            loss_ce
-            + self.cfg.LOREAL.COEF1 * loss_hld
-            + self.cfg.LOREAL.COEF2 * loss_lld
-            + self.cfg.LOREAL.COEF_TCE * loss_tce
-            + self.cfg.LOREAL.COEF_BPD * loss_bpd
-        )
+        loss = loss_ce + self.cfg.LOREAL.COEF1 * loss_hld + self.cfg.LOREAL.COEF2 * loss_lld
         
         self.model_backward_and_update(loss)
         loss_summary = {
             "loss": loss.item(),
             "loss_ce": loss_ce.item(),
             "loss_hld": loss_hld.item(),
-            "loss_bpd": loss_bpd.item(),
             "loss_lld": loss_lld.item(),
-            "loss_tce": loss_tce.item(),
             "acc": compute_accuracy(output, label)[0].item(),
         }
 
