@@ -5,7 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_DIR}"
 
-DATA_ROOT="${DATA_ROOT:-${REPO_DIR}/datasets}"
+DEFAULT_DATA_ROOT="${DEFAULT_DATA_ROOT:-/mnt/workspace/wxc/datasets}"
+if [[ ! -d "${DEFAULT_DATA_ROOT}" ]]; then
+  DEFAULT_DATA_ROOT="${REPO_DIR}/datasets"
+fi
+DATA_ROOT="${DATA_ROOT:-${DEFAULT_DATA_ROOT}}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_DIR}/runs}"
 DATASET="${DATASET:-oxford_flowers}"
 RES="${RES:-96}"
