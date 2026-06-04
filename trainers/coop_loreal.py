@@ -517,12 +517,24 @@ class CoOp_LOREAL(TrainerX):
         stu2 = self.model.only_image_outputs(niimage)
         stu1 = self.model_teacher.only_image_outputs(image)
         
-        # Align the supervised/distillation path with inference:
-        # teacher uses HR visual semantics, student uses LR visual semantics.
+        # Main path stays aligned with inference: teacher uses HR visual
+        # semantics, student uses LR visual semantics.
         tea_logits = self.model_teacher(image, stu1)
         mix_w = self.aligned_mix_weight()
         student_cond = F.normalize((1.0 - mix_w) * stu1 + mix_w * stu2, dim=-1)
         output = self.model(niimage, student_cond)
+
+        # Keep the original LOREAL cross-resolution cycle as a low-weight
+        # regularizer, without letting it drive the supervised CE path.
+        loss_bpd = torch.zeros([], device=self.device)
+        if float(self.cfg.LOREAL.COEF_BPD) > 0:
+            tea_bridge = self.model_teacher(image, stu2)
+            output_bridge = self.model(niimage, stu1)
+            loss_bpd = F.kl_div(
+                F.log_softmax(output_bridge / self.temperature, dim=1),
+                F.softmax(tea_bridge.detach() / self.temperature, dim=1),
+                reduction="batchmean",
+            ) * (self.temperature * self.temperature)
 
         # Final objective from Sec. 3.4:
         # L = LCE + lambda1 * LHLD + lambda2 * (1/K) * LLLD.
@@ -537,7 +549,12 @@ class CoOp_LOREAL(TrainerX):
         contexts_hr = self.model_teacher.prompt_learner.attribute_contexts(stu1)
         contexts_lr = self.model.prompt_learner.attribute_contexts(stu2)
         loss_lld = self.low_level_distillation(contexts_hr, contexts_lr)
-        loss = loss_ce + self.cfg.LOREAL.COEF1 * loss_hld + self.cfg.LOREAL.COEF2 * loss_lld
+        loss = (
+            loss_ce
+            + self.cfg.LOREAL.COEF1 * loss_hld
+            + self.cfg.LOREAL.COEF2 * loss_lld
+            + self.cfg.LOREAL.COEF_BPD * loss_bpd
+        )
         
         self.model_backward_and_update(loss)
         loss_summary = {
@@ -545,6 +562,7 @@ class CoOp_LOREAL(TrainerX):
             "loss_ce": loss_ce.item(),
             "loss_hld": loss_hld.item(),
             "loss_lld": loss_lld.item(),
+            "loss_bpd": loss_bpd.item(),
             "mix_w": mix_w,
             "acc": compute_accuracy(output, label)[0].item(),
         }
