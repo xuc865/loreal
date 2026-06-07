@@ -524,18 +524,6 @@ class CoOp_LOREAL(TrainerX):
         student_cond = F.normalize((1.0 - mix_w) * stu1 + mix_w * stu2, dim=-1)
         output = self.model(niimage, student_cond)
 
-        # Keep the original LOREAL cross-resolution cycle as a low-weight
-        # regularizer, without letting it drive the supervised CE path.
-        loss_bpd = torch.zeros([], device=self.device)
-        if float(self.cfg.LOREAL.COEF_BPD) > 0:
-            tea_bridge = self.model_teacher(image, stu2)
-            output_bridge = self.model(niimage, stu1)
-            loss_bpd = F.kl_div(
-                F.log_softmax(output_bridge / self.temperature, dim=1),
-                F.softmax(tea_bridge.detach() / self.temperature, dim=1),
-                reduction="batchmean",
-            ) * (self.temperature * self.temperature)
-
         # Final objective from Sec. 3.4:
         # L = LCE + lambda1 * LHLD + lambda2 * (1/K) * LLLD.
         # The implemented LLD is averaged by cross_entropy over B*K entries,
@@ -549,22 +537,53 @@ class CoOp_LOREAL(TrainerX):
         contexts_hr = self.model_teacher.prompt_learner.attribute_contexts(stu1)
         contexts_lr = self.model.prompt_learner.attribute_contexts(stu2)
         loss_lld = self.low_level_distillation(contexts_hr, contexts_lr)
-        loss = (
+        loss_main = (
             loss_ce
             + self.cfg.LOREAL.COEF1 * loss_hld
             + self.cfg.LOREAL.COEF2 * loss_lld
-            + self.cfg.LOREAL.COEF_BPD * loss_bpd
         )
-        
-        self.model_backward_and_update(loss)
+
+        loss_ce_item = loss_ce.item()
+        loss_hld_item = loss_hld.item()
+        loss_lld_item = loss_lld.item()
+        loss_bpd_item = 0.0
+        acc_item = compute_accuracy(output, label)[0].item()
+
+        # Backprop the aligned main path first, then release its graph before
+        # running the auxiliary cross-resolution bridge. This keeps the LOREAL
+        # cycle without doubling the text-transformer activation peak.
+        self.model_zero_grad()
+        self.model_backward(loss_main)
+        loss_item = loss_main.item()
+        del output, tea_logits, contexts_hr, contexts_lr
+        del loss_ce, loss_hld, loss_lld, loss_main
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        coef_bpd = float(self.cfg.LOREAL.COEF_BPD)
+        if coef_bpd > 0:
+            with torch.no_grad():
+                tea_bridge = self.model_teacher(image, stu2)
+            output_bridge = self.model(niimage, stu1)
+            loss_bpd = F.kl_div(
+                F.log_softmax(output_bridge / self.temperature, dim=1),
+                F.softmax(tea_bridge / self.temperature, dim=1),
+                reduction="batchmean",
+            ) * (self.temperature * self.temperature)
+            loss_bpd_item = loss_bpd.item()
+            self.model_backward(coef_bpd * loss_bpd)
+            loss_item += coef_bpd * loss_bpd_item
+            del output_bridge, tea_bridge, loss_bpd
+
+        self.model_update()
         loss_summary = {
-            "loss": loss.item(),
-            "loss_ce": loss_ce.item(),
-            "loss_hld": loss_hld.item(),
-            "loss_lld": loss_lld.item(),
-            "loss_bpd": loss_bpd.item(),
+            "loss": loss_item,
+            "loss_ce": loss_ce_item,
+            "loss_hld": loss_hld_item,
+            "loss_lld": loss_lld_item,
+            "loss_bpd": loss_bpd_item,
             "mix_w": mix_w,
-            "acc": compute_accuracy(output, label)[0].item(),
+            "acc": acc_item,
         }
 
         if (self.batch_idx + 1) == self.num_batches:
